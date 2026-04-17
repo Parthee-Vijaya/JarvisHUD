@@ -72,6 +72,85 @@ class GeminiClient {
         }
     }
 
+    // MARK: - Chat & Streaming
+
+    /// Create a GenerativeModel and start an SDK Chat for multi-turn conversation.
+    func startChat(mode: Mode, history: [ModelContent] = []) -> (GenerativeModel, Chat)? {
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
+        guard let model = makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else { return nil }
+        let chat = model.startChat(history: history)
+        return (model, chat)
+    }
+
+    /// Stream a text message through an existing SDK Chat, calling `onDelta` for each token chunk.
+    func sendTextStreaming(
+        chat: Chat,
+        text: String,
+        mode: Mode,
+        onDelta: @escaping (String) -> Void
+    ) async -> Result<String, Error> {
+        do {
+            var full = ""
+            let stream = chat.sendMessageStream(text)
+            for try await chunk in stream {
+                if let part = chunk.text {
+                    full += part
+                    onDelta(part)
+                }
+                if let usage = chunk.usageMetadata {
+                    usageTracker.trackUsage(
+                        model: mode.model,
+                        inputTokens: usage.promptTokenCount ?? 0,
+                        outputTokens: usage.candidatesTokenCount ?? 0
+                    )
+                }
+            }
+            guard !full.isEmpty else { return .failure(JarvisError.emptyResponse) }
+            let cleaned = postProcess(full)
+            return .success(cleaned)
+        } catch {
+            LoggingService.shared.log("Streaming error: \(error)", level: .error)
+            return .failure(error)
+        }
+    }
+
+    /// Stream audio through generateContentStream (single-turn, for voice-in-chat).
+    func sendAudioStreaming(
+        _ audioData: Data,
+        mode: Mode,
+        onDelta: @escaping (String) -> Void
+    ) async -> Result<String, Error> {
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
+        guard let model = makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
+            return .failure(JarvisError.noAPIKey)
+        }
+
+        do {
+            let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
+            let content = [ModelContent(role: "user", parts: [audioPart])]
+            var full = ""
+            let stream = model.generateContentStream(content)
+            for try await chunk in stream {
+                if let part = chunk.text {
+                    full += part
+                    onDelta(part)
+                }
+                if let usage = chunk.usageMetadata {
+                    usageTracker.trackUsage(
+                        model: mode.model,
+                        inputTokens: usage.promptTokenCount ?? 0,
+                        outputTokens: usage.candidatesTokenCount ?? 0
+                    )
+                }
+            }
+            guard !full.isEmpty else { return .failure(JarvisError.emptyResponse) }
+            let cleaned = postProcess(full)
+            return .success(cleaned)
+        } catch {
+            return .failure(error)
+        }
+    }
+
     // MARK: - Core Generation
 
     private func executeGeneration(model: GenerativeModel, parts: [ModelContent.Part], mode: Mode) async throws -> String {

@@ -5,6 +5,10 @@ struct HUDContentView: View {
     let onClose: () -> Void
     var onSpeak: ((String) -> Void)?
     var onPermissionAction: (() -> Void)?
+    var chatSession: ChatSession?
+    var onChatSend: ((String) -> Void)?
+    var onChatVoice: (() -> Void)?
+    var onPin: (() -> Void)?
 
     @State private var appeared = false
     @State private var waveformPhases: [Bool] = Array(repeating: false, count: Constants.Animation.waveformBarCount)
@@ -50,6 +54,17 @@ struct HUDContentView: View {
             errorView(message: message)
         case .permissionError(let permission, let instructions):
             permissionErrorView(permission: permission, instructions: instructions)
+        case .chat:
+            if let chatSession, let onChatSend {
+                ChatView(
+                    chatSession: chatSession,
+                    onSend: onChatSend,
+                    onVoice: onChatVoice,
+                    onClose: onClose,
+                    onPin: { onPin?() },
+                    isPinned: state.isPinned
+                )
+            }
         }
     }
 
@@ -113,9 +128,15 @@ struct HUDContentView: View {
     private func resultView(text: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                headerIcon("waveform.circle.fill", color: .accent)
+                headerIcon("waveform.circle.fill", color: .accentColor)
                 Text("Jarvis").font(.headline)
                 Spacer()
+                Button(action: { onPin?() }) {
+                    Image(systemName: state.isPinned ? "pin.fill" : "pin")
+                        .foregroundStyle(state.isPinned ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(state.isPinned ? "Unpin" : "Pin")
                 Button(action: { onSpeak?(text) }) {
                     Image(systemName: "speaker.wave.2.fill").foregroundStyle(.secondary)
                 }
@@ -128,9 +149,7 @@ struct HUDContentView: View {
             }
             Divider()
             ScrollView {
-                Text(text)
-                    .font(.body)
-                    .textSelection(.enabled)
+                MarkdownTextView(text)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 200)

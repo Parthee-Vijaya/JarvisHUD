@@ -69,5 +69,33 @@ enum BuiltInModes {
         isBuiltIn: true
     )
 
-    static let all: [Mode] = [dictation, vibeCode, professional, qna, vision]
+    static let chat = Mode(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!,
+        name: "Chat",
+        systemPrompt: """
+        Du er Jarvis, en hjælpsom AI-assistent. Svar præcist og hjælpsomt på brugerens besked. \
+        Brug markdown formatting til at strukturere dine svar. Hold svarene kortfattede medmindre \
+        brugeren beder om detaljer. Svar på samme sprog som brugeren skriver.
+        """,
+        model: .flash,
+        outputType: .chat,
+        maxTokens: 4096,
+        isBuiltIn: true
+    )
+
+    static let translate = Mode(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000007")!,
+        name: "Translate",
+        systemPrompt: """
+        Du er en oversætter. Hvis brugerens tekst er på dansk, oversæt til engelsk. \
+        Hvis teksten er på engelsk, oversæt til dansk. Returnér KUN oversættelsen, \
+        ingen forklaring eller meta-kommentar. Bevar tone og stil.
+        """,
+        model: .flash,
+        outputType: .paste,
+        maxTokens: 2048,
+        isBuiltIn: true
+    )
+
+    static let all: [Mode] = [dictation, vibeCode, professional, qna, vision, chat, translate]
 }

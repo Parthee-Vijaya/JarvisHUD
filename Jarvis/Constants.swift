@@ -3,7 +3,7 @@ import AVFoundation
 enum Constants {
     // MARK: - App
     static let appName = "Jarvis"
-    static let appVersion = "2.0"
+    static let appVersion = "3.0"
     static let bundleID = "pavi.Jarvis"
 
     // MARK: - Keychain
@@ -61,10 +61,23 @@ enum Constants {
     // MARK: - Crash Recovery
     static let crashRecoveryKey = "JarvisPipelineState"
 
+    // MARK: - Chat HUD Dimensions
+    enum ChatHUD {
+        static let width: CGFloat = 420
+        static let height: CGFloat = 520
+        static let minWidth: CGFloat = 320
+        static let minHeight: CGFloat = 400
+    }
+
     // MARK: - UserDefaults Keys
     enum Defaults {
         static let hasLaunchedBefore = "hasLaunchedBefore"
         static let ttsEnabled = "ttsEnabled"
+        static let hudPinned = "hudPinned"
+        static let chatFrameX = "chatFrameX"
+        static let chatFrameY = "chatFrameY"
+        static let chatFrameW = "chatFrameW"
+        static let chatFrameH = "chatFrameH"
     }
 
     // MARK: - Gemini Models

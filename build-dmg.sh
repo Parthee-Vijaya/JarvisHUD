@@ -5,7 +5,7 @@ APP_NAME="Jarvis"
 SCHEME="Jarvis"
 PROJECT="Jarvis.xcodeproj"
 BUILD_DIR="build"
-DMG_NAME="Jarvis-2.0.dmg"
+DMG_NAME="Jarvis-3.0.dmg"
 
 echo "=== Building $APP_NAME ==="
 

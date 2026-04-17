@@ -15,11 +15,13 @@ enum GeminiModel: String, Codable, CaseIterable {
 enum OutputType: String, Codable, CaseIterable {
     case paste
     case hud
+    case chat
 
     var displayName: String {
         switch self {
         case .paste: return "Paste at cursor"
         case .hud: return "Show in HUD"
+        case .chat: return "Chat window"
         }
     }
 }

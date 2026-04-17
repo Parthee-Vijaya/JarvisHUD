@@ -22,6 +22,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkeyManager = HotkeyManager()
     private let hudController = HUDWindowController()
     private var pipeline: RecordingPipeline!
+    let chatSession = ChatSession()
+    private var chatPipeline: ChatPipeline!
 
     // Supporting services (owned here, injected into pipeline)
     private let audioCapture = AudioCaptureManager()
@@ -36,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             setupPipeline()
+            setupChatPipeline()
             setupMenuBar()
             setupHotkeys()
             setupCostWarning()
@@ -61,6 +64,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline.onStateChanged = { [weak self] state in
             self?.updateMenuBarIcon(state: state)
             self?.updateUsageLabel()
+        }
+    }
+
+    // MARK: - Chat Pipeline Setup
+
+    private func setupChatPipeline() {
+        hudController.chatSession = chatSession
+
+        chatPipeline = ChatPipeline(
+            geminiClient: geminiClient,
+            chatSession: chatSession,
+            hudController: hudController
+        )
+
+        hudController.onChatSend = { [weak self] text in
+            self?.chatPipeline.sendTextMessage(text)
+        }
+
+        hudController.onPinToggle = { [weak self] in
+            guard let self else { return }
+            self.hudController.hudState.isPinned.toggle()
         }
     }
 
@@ -212,6 +236,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.modeManager.cycleMode()
             self.updateModeCheckmark()
             LoggingService.shared.log("Mode cycled to: \(self.modeManager.activeMode.name)")
+        }
+
+        hotkeyManager.onChatToggle = { [weak self] in
+            guard let self else { return }
+            if self.hudController.isChatVisible {
+                self.hudController.saveChatFrame()
+                self.hudController.close()
+            } else {
+                self.hudController.showChat()
+            }
+        }
+
+        hotkeyManager.onTranslateKeyDown = { [weak self] in
+            self?.pipeline.handleRecordStart(mode: BuiltInModes.translate, captureScreen: false)
+        }
+        hotkeyManager.onTranslateKeyUp = { [weak self] in
+            self?.pipeline.handleRecordStop()
         }
 
         hotkeyManager.registerHotkeys()

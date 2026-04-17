@@ -7,6 +7,8 @@ class HotkeyManager {
     private var qnaHotKey: HotKey?
     private var visionHotKey: HotKey?
     private var modeCycleHotKey: HotKey?
+    private var chatToggleHotKey: HotKey?
+    private var translateHotKey: HotKey?
 
     var onDictationKeyDown: (() -> Void)?
     var onDictationKeyUp: (() -> Void)?
@@ -15,6 +17,9 @@ class HotkeyManager {
     var onVisionKeyDown: (() -> Void)?
     var onVisionKeyUp: (() -> Void)?
     var onModeCycle: (() -> Void)?
+    var onChatToggle: (() -> Void)?
+    var onTranslateKeyDown: (() -> Void)?
+    var onTranslateKeyUp: (() -> Void)?
 
     func registerHotkeys() {
         dictationHotKey = HotKey(key: .space, modifiers: [.option])
@@ -32,6 +37,13 @@ class HotkeyManager {
         modeCycleHotKey = HotKey(key: .m, modifiers: [.option])
         modeCycleHotKey?.keyDownHandler = { [weak self] in self?.onModeCycle?() }
 
+        chatToggleHotKey = HotKey(key: .c, modifiers: [.option])
+        chatToggleHotKey?.keyDownHandler = { [weak self] in self?.onChatToggle?() }
+
+        translateHotKey = HotKey(key: .t, modifiers: [.option])
+        translateHotKey?.keyDownHandler = { [weak self] in self?.onTranslateKeyDown?() }
+        translateHotKey?.keyUpHandler = { [weak self] in self?.onTranslateKeyUp?() }
+
         LoggingService.shared.log("Hotkeys registered")
     }
 
@@ -40,5 +52,7 @@ class HotkeyManager {
         qnaHotKey = nil
         visionHotKey = nil
         modeCycleHotKey = nil
+        chatToggleHotKey = nil
+        translateHotKey = nil
     }
 }

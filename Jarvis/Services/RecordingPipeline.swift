@@ -180,6 +180,9 @@ class RecordingPipeline {
         case .hud:
             hudController.showResult(text)
             ttsService.speak(text)
+        case .chat:
+            // Chat output is handled by ChatPipeline
+            break
         }
     }
 

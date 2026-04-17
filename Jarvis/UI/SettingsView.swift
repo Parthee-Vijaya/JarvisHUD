@@ -32,12 +32,17 @@ struct SettingsView: View {
         }
     }
 
+    @State private var conversations: [Conversation] = []
+    private let conversationStore = ConversationStore()
+
     var body: some View {
         TabView {
             apiKeyTab
                 .tabItem { Label("API Key", systemImage: "key") }
             modesTab
                 .tabItem { Label("Modes", systemImage: "list.bullet") }
+            historyTab
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
             usageTab
                 .tabItem { Label("Usage", systemImage: "chart.bar") }
             generalTab
@@ -154,6 +159,66 @@ struct SettingsView: View {
         .padding()
     }
 
+    private var historyTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Conversation History").font(.headline)
+                Spacer()
+                if !conversations.isEmpty {
+                    Button("Slet alle", role: .destructive) {
+                        conversationStore.deleteAll()
+                        conversations = []
+                    }
+                    .controlSize(.small)
+                }
+            }
+            if conversations.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.largeTitle)
+                        .foregroundStyle(.tertiary)
+                    Text("Ingen samtaler endnu")
+                        .foregroundStyle(.secondary)
+                    Text("Brug ⌥C for at starte en chat")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                List {
+                    ForEach(conversations) { convo in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(convo.displayTitle)
+                                .fontWeight(.medium)
+                                .lineLimit(1)
+                            HStack {
+                                Text("\(convo.messages.count) beskeder")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(convo.updatedAt, style: .relative)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .contextMenu {
+                            Button("Slet", role: .destructive) {
+                                conversationStore.delete(id: convo.id)
+                                conversations.removeAll { $0.id == convo.id }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .onAppear {
+            conversations = conversationStore.loadAll()
+        }
+    }
+
     private var generalTab: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("General").font(.headline)
@@ -168,6 +233,8 @@ struct SettingsView: View {
                     ShortcutRow(keys: "⌥ Space", description: "Push-to-talk (active mode)")
                     ShortcutRow(keys: "⌥ Q", description: "Push-to-talk Q&A mode")
                     ShortcutRow(keys: "⌥ ⇧ Space", description: "Vision mode (screenshot + voice)")
+                    ShortcutRow(keys: "⌥ C", description: "Toggle Chat mode")
+                    ShortcutRow(keys: "⌥ T", description: "Quick Translate (hold to talk)")
                     ShortcutRow(keys: "⌥ M", description: "Cycle modes")
                 }
             }
