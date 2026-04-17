@@ -15,6 +15,10 @@ class AudioCaptureManager {
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
+        guard format.sampleRate > 0 else {
+            throw JarvisError.audioFormatInvalid
+        }
+
         audioData = Data()
         audioData.append(createWAVHeader(dataSize: 0, sampleRate: format.sampleRate, channels: UInt16(format.channelCount)))
 

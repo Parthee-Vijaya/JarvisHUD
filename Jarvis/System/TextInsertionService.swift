@@ -19,7 +19,8 @@ class TextInsertionService {
         let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
         guard result == .success, let element = focusedElement else { return false }
 
-        let axElement = element as! AXUIElement
+        // CFTypeRef is always bridgeable to AXUIElement when AX API returns success
+        let axElement = element as! AXUIElement  // swiftlint:disable:this force_cast — CF bridging, guaranteed by AX API contract
 
         // Try inserting at cursor via kAXSelectedTextAttribute (replaces selection or inserts at cursor)
         var selectedRange: CFTypeRef?

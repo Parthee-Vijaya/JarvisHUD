@@ -18,12 +18,14 @@ class UsageTracker {
     private static let proOutputPrice = 5.00
 
     var currentUsage: MonthlyUsage
+    var onCostWarning: ((Double) -> Void)?
 
     var formattedUsage: String {
         "Usage: $\(String(format: "%.2f", currentUsage.totalCostUSD)) this month"
     }
 
     private let storageURL: URL
+    private var costWarningFired = false
 
     init() {
         let appSupport = FileManager.default.homeDirectoryForCurrentUser
@@ -46,6 +48,7 @@ class UsageTracker {
         }
         recalculateCost()
         saveUsage()
+        checkCostWarning()
     }
 
     private func recalculateCost() {
@@ -56,10 +59,19 @@ class UsageTracker {
         currentUsage.totalCostUSD = flashInput + flashOutput + proInput + proOutput
     }
 
+    private func checkCostWarning() {
+        guard !costWarningFired,
+              currentUsage.totalCostUSD >= Constants.costWarningThresholdUSD else { return }
+        costWarningFired = true
+        LoggingService.shared.log("Cost warning: monthly usage reached $\(String(format: "%.2f", currentUsage.totalCostUSD))", level: .warning)
+        onCostWarning?(currentUsage.totalCostUSD)
+    }
+
     private func checkMonthReset() {
         let now = Self.currentMonth()
         if currentUsage.month != now {
             currentUsage = MonthlyUsage(month: now)
+            costWarningFired = false
             saveUsage()
             LoggingService.shared.log("Usage tracker reset for new month: \(now)")
         }

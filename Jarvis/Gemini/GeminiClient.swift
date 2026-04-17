@@ -26,7 +26,7 @@ class GeminiClient {
 
     func testConnection() async -> Result<String, Error> {
         guard let model = makeModel(
-            modelName: "gemini-2.5-flash",
+            modelName: Constants.GeminiModelName.flash,
             systemPrompt: "You are a test assistant."
         ) else {
             return .failure(JarvisError.noAPIKey)
@@ -46,66 +46,97 @@ class GeminiClient {
     }
 
     func sendAudio(_ audioData: Data, mode: Mode) async -> Result<String, Error> {
-        let modelName = mode.model == .pro ? "gemini-2.5-pro" : "gemini-2.5-flash"
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
 
         guard let model = makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
             return .failure(JarvisError.noAPIKey)
         }
 
-        do {
-            let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
-            let response = try await model.generateContent([audioPart])
-
-            if let usage = response.usageMetadata {
-                usageTracker.trackUsage(
-                    model: mode.model,
-                    inputTokens: usage.promptTokenCount ?? 0,
-                    outputTokens: usage.candidatesTokenCount ?? 0
-                )
-            }
-
-            if let text = response.text {
-                let cleaned = postProcess(text)
-                LoggingService.shared.log("Gemini response received (\(cleaned.count) chars)")
-                return .success(cleaned)
-            }
-            return .failure(JarvisError.emptyResponse)
-        } catch {
-            LoggingService.shared.log("Gemini API error: \(error)", level: .error)
-            return .failure(error)
+        let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
+        return await withRetry {
+            try await self.executeGeneration(model: model, parts: [audioPart], mode: mode)
         }
     }
 
     func sendAudioWithImage(_ audioData: Data, imageData: Data, mode: Mode) async -> Result<String, Error> {
-        let modelName = mode.model == .pro ? "gemini-2.5-pro" : "gemini-2.5-flash"
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
 
         guard let model = makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
             return .failure(JarvisError.noAPIKey)
         }
 
-        do {
-            let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
-            let imagePart = ModelContent.Part.data(mimetype: "image/png", imageData)
-            let response = try await model.generateContent([audioPart, imagePart])
-
-            if let usage = response.usageMetadata {
-                usageTracker.trackUsage(
-                    model: mode.model,
-                    inputTokens: usage.promptTokenCount ?? 0,
-                    outputTokens: usage.candidatesTokenCount ?? 0
-                )
-            }
-
-            if let text = response.text {
-                let cleaned = postProcess(text)
-                return .success(cleaned)
-            }
-            return .failure(JarvisError.emptyResponse)
-        } catch {
-            LoggingService.shared.log("Gemini vision API error: \(error)", level: .error)
-            return .failure(error)
+        let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
+        let imagePart = ModelContent.Part.data(mimetype: "image/png", imageData)
+        return await withRetry {
+            try await self.executeGeneration(model: model, parts: [audioPart, imagePart], mode: mode)
         }
     }
+
+    // MARK: - Core Generation
+
+    private func executeGeneration(model: GenerativeModel, parts: [ModelContent.Part], mode: Mode) async throws -> String {
+        let content = [ModelContent(role: "user", parts: parts)]
+        let response = try await model.generateContent(content)
+
+        if let usage = response.usageMetadata {
+            usageTracker.trackUsage(
+                model: mode.model,
+                inputTokens: usage.promptTokenCount ?? 0,
+                outputTokens: usage.candidatesTokenCount ?? 0
+            )
+        }
+
+        guard let text = response.text else {
+            throw JarvisError.emptyResponse
+        }
+
+        let cleaned = postProcess(text)
+        LoggingService.shared.log("Gemini response received (\(cleaned.count) chars)")
+        return cleaned
+    }
+
+    // MARK: - Retry with Exponential Backoff
+
+    private func withRetry(
+        maxAttempts: Int = Constants.Retry.maxAttempts,
+        operation: @escaping () async throws -> String
+    ) async -> Result<String, Error> {
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            do {
+                let result = try await operation()
+                return .success(result)
+            } catch {
+                lastError = error
+
+                // Only retry on transient network errors
+                guard isTransientError(error), attempt < maxAttempts else {
+                    LoggingService.shared.log("Gemini API error (attempt \(attempt)/\(maxAttempts), not retrying): \(error)", level: .error)
+                    break
+                }
+
+                let delay = Constants.Retry.baseDelay * pow(Constants.Retry.backoffMultiplier, Double(attempt - 1))
+                LoggingService.shared.log("Gemini API error (attempt \(attempt)/\(maxAttempts)), retrying in \(delay)s: \(error)", level: .warning)
+                try? await Task.sleep(for: .seconds(delay))
+            }
+        }
+
+        return .failure(lastError ?? JarvisError.emptyResponse)
+    }
+
+    private func isTransientError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        // Network-related error domains
+        if nsError.domain == NSURLErrorDomain {
+            return true
+        }
+        // HTTP 5xx or timeout-like errors
+        let transientCodes = [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost, NSURLErrorNotConnectedToInternet]
+        return transientCodes.contains(nsError.code)
+    }
+
+    // MARK: - Post Processing
 
     private func postProcess(_ text: String) -> String {
         var result = text
@@ -129,16 +160,22 @@ enum JarvisError: LocalizedError {
     case noAPIKey
     case emptyResponse
     case audioCaptureFailed
+    case audioFormatInvalid
     case accessibilityDenied
     case screenCaptureDenied
+    case networkError(underlying: Error)
+    case permissionDenied(permission: String, instructions: String)
 
     var errorDescription: String? {
         switch self {
         case .noAPIKey: return "No Gemini API key found. Please add it in Settings."
         case .emptyResponse: return "Gemini returned an empty response."
         case .audioCaptureFailed: return "Failed to capture audio from microphone."
+        case .audioFormatInvalid: return "Audio input format is invalid (sample rate is 0)."
         case .accessibilityDenied: return "Accessibility permission is required for text insertion."
         case .screenCaptureDenied: return "Screen Recording permission is required for Vision mode."
+        case .networkError(let underlying): return "Network error: \(underlying.localizedDescription)"
+        case .permissionDenied(let permission, _): return "\(permission) permission is required."
         }
     }
 }

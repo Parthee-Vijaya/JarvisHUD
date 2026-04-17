@@ -2,8 +2,9 @@ import Foundation
 import Security
 
 class KeychainService: @unchecked Sendable {
-    private let serviceName = "pavi.Jarvis"
-    private let accountName = "GeminiAPIKey"
+    private let serviceName = Constants.keychainService
+    private let accountName = Constants.keychainAccount
+    private var cachedKey: String?
 
     func saveAPIKey(_ key: String) -> Bool {
         guard let data = key.data(using: .utf8) else { return false }
@@ -18,13 +19,17 @@ class KeychainService: @unchecked Sendable {
         ]
 
         let status = SecItemAdd(query as CFDictionary, nil)
-        if status != errSecSuccess {
+        if status == errSecSuccess {
+            cachedKey = key
+        } else {
             LoggingService.shared.log("Keychain save failed: \(status)", level: .error)
         }
         return status == errSecSuccess
     }
 
     func getAPIKey() -> String? {
+        if let cachedKey { return cachedKey }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -39,11 +44,14 @@ class KeychainService: @unchecked Sendable {
         guard status == errSecSuccess, let data = result as? Data else {
             return nil
         }
-        return String(data: data, encoding: .utf8)
+        let key = String(data: data, encoding: .utf8)
+        cachedKey = key
+        return key
     }
 
     @discardableResult
     func deleteAPIKey() -> Bool {
+        cachedKey = nil
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,

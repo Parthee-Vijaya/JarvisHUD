@@ -6,6 +6,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
     private var settingsWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
+
+    // Menu items updated in-place
+    private var modeMenuItem: NSMenuItem?
+    private var usageMenuItem: NSMenuItem?
+    private var modesSubmenuItem: NSMenuItem?
 
     // MARK: - Public (accessed by JarvisApp)
     let modeManager = ModeManager()
@@ -13,34 +19,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Services
     private let keychainService = KeychainService()
-    private let geminiClient: GeminiClient
     private let hotkeyManager = HotkeyManager()
+    private let hudController = HUDWindowController()
+    private var pipeline: RecordingPipeline!
+
+    // Supporting services (owned here, injected into pipeline)
     private let audioCapture = AudioCaptureManager()
     private let textInsertion = TextInsertionService()
     private let permissions = PermissionsManager()
     private let screenCapture = ScreenCaptureService()
-    private let hudController = HUDWindowController()
     private let ttsService = TTSService()
-
-    // MARK: - Pipeline state
-    private var recordingState: RecordingState = .idle
-    private var activePipelineMode: Mode?
-    private var pendingScreenshot: Data?
-
-    override init() {
-        self.geminiClient = GeminiClient(keychainService: keychainService, usageTracker: usageTracker)
-        super.init()
-    }
+    private lazy var geminiClient = GeminiClient(keychainService: keychainService, usageTracker: usageTracker)
 
     // MARK: - App Lifecycle
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
+            setupPipeline()
             setupMenuBar()
             setupHotkeys()
-            setupHUDCallbacks()
+            setupCostWarning()
             checkFirstLaunch()
-            LoggingService.shared.log("Jarvis started")
+            LoggingService.shared.log("Jarvis v\(Constants.appVersion) started")
+        }
+    }
+
+    // MARK: - Pipeline Setup
+
+    private func setupPipeline() {
+        pipeline = RecordingPipeline(
+            audioCapture: audioCapture,
+            geminiClient: geminiClient,
+            textInsertion: textInsertion,
+            screenCapture: screenCapture,
+            permissions: permissions,
+            hudController: hudController,
+            ttsService: ttsService,
+            modeManager: modeManager
+        )
+
+        pipeline.onStateChanged = { [weak self] state in
+            self?.updateMenuBarIcon(state: state)
+            self?.updateUsageLabel()
         }
     }
 
@@ -54,45 +74,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.image?.isTemplate = true
         }
 
-        rebuildMenu()
+        buildMenu()
     }
 
-    func rebuildMenu() {
+    private func buildMenu() {
         statusMenu = NSMenu()
 
-        let headerItem = NSMenuItem(title: "Jarvis v1.0", action: nil, keyEquivalent: "")
+        let headerItem = NSMenuItem(title: "Jarvis v\(Constants.appVersion)", action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         statusMenu.addItem(headerItem)
         statusMenu.addItem(NSMenuItem.separator())
 
         let modeItem = NSMenuItem(title: "Mode: \(modeManager.activeMode.name)", action: nil, keyEquivalent: "")
         modeItem.isEnabled = false
+        self.modeMenuItem = modeItem
         statusMenu.addItem(modeItem)
 
         let modesItem = NSMenuItem(title: "Switch Mode", action: nil, keyEquivalent: "")
-        let modesSubmenu = NSMenu()
-        for mode in modeManager.allModes {
-            let item = NSMenuItem(title: mode.name, action: #selector(switchMode(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.id.uuidString
-            if mode.id == modeManager.activeMode.id {
-                item.state = .on
-            }
-            modesSubmenu.addItem(item)
-        }
-        modesItem.submenu = modesSubmenu
+        modesItem.submenu = buildModesSubmenu()
+        self.modesSubmenuItem = modesItem
         statusMenu.addItem(modesItem)
 
         statusMenu.addItem(NSMenuItem.separator())
 
         let usageItem = NSMenuItem(title: usageTracker.formattedUsage, action: nil, keyEquivalent: "")
         usageItem.isEnabled = false
+        self.usageMenuItem = usageItem
         statusMenu.addItem(usageItem)
 
         statusMenu.addItem(NSMenuItem.separator())
 
-        statusMenu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
-        statusMenu.items.last?.target = self
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        statusMenu.addItem(settingsItem)
 
         statusMenu.addItem(NSMenuItem.separator())
         statusMenu.addItem(NSMenuItem(title: "Quit Jarvis", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -100,11 +114,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = statusMenu
     }
 
+    private func buildModesSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        for mode in modeManager.allModes {
+            let item = NSMenuItem(title: mode.name, action: #selector(switchMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.id.uuidString
+            if mode.id == modeManager.activeMode.id {
+                item.state = .on
+            }
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
+    // MARK: - Targeted Menu Updates
+
+    private func updateModeCheckmark() {
+        modeMenuItem?.title = "Mode: \(modeManager.activeMode.name)"
+        modesSubmenuItem?.submenu = buildModesSubmenu()
+    }
+
+    private func updateUsageLabel() {
+        usageMenuItem?.title = usageTracker.formattedUsage
+    }
+
+    // MARK: - Menu Actions
+
     @objc private func switchMode(_ sender: NSMenuItem) {
         guard let idString = sender.representedObject as? String,
               let uuid = UUID(uuidString: idString) else { return }
         modeManager.setActiveMode(byId: uuid)
-        rebuildMenu()
+        updateModeCheckmark()
     }
 
     @objc private func openSettings() {
@@ -124,9 +165,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - Menu Bar Icon State
+    // MARK: - Menu Bar Icon
 
-    func updateMenuBarIcon(state: RecordingState) {
+    private func updateMenuBarIcon(state: RecordingState) {
         guard let button = statusItem.button else { return }
         switch state {
         case .idle:
@@ -142,180 +183,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         button.image?.isTemplate = (state == .idle)
     }
 
-    // MARK: - Hotkey Setup
+    // MARK: - Hotkeys
 
     private func setupHotkeys() {
-        // ⌥Space: Push-to-talk with active mode
         hotkeyManager.onDictationKeyDown = { [weak self] in
-            self?.handleRecordStart(mode: nil, captureScreen: false)
+            self?.pipeline.handleRecordStart(mode: nil, captureScreen: false)
         }
         hotkeyManager.onDictationKeyUp = { [weak self] in
-            self?.handleRecordStop()
+            self?.pipeline.handleRecordStop()
         }
 
-        // ⌥Q: Push-to-talk in Q&A mode
         hotkeyManager.onQnAKeyDown = { [weak self] in
-            self?.handleRecordStart(mode: BuiltInModes.qna, captureScreen: false)
+            self?.pipeline.handleRecordStart(mode: BuiltInModes.qna, captureScreen: false)
         }
         hotkeyManager.onQnAKeyUp = { [weak self] in
-            self?.handleRecordStop()
+            self?.pipeline.handleRecordStop()
         }
 
-        // ⌥⇧Space: Push-to-talk in Vision mode (captures screenshot on start)
         hotkeyManager.onVisionKeyDown = { [weak self] in
-            self?.handleRecordStart(mode: BuiltInModes.vision, captureScreen: true)
+            self?.pipeline.handleRecordStart(mode: BuiltInModes.vision, captureScreen: true)
         }
         hotkeyManager.onVisionKeyUp = { [weak self] in
-            self?.handleRecordStop()
+            self?.pipeline.handleRecordStop()
         }
 
-        // ⌥M: Cycle modes
         hotkeyManager.onModeCycle = { [weak self] in
             guard let self else { return }
             self.modeManager.cycleMode()
-            self.rebuildMenu()
+            self.updateModeCheckmark()
             LoggingService.shared.log("Mode cycled to: \(self.modeManager.activeMode.name)")
         }
 
         hotkeyManager.registerHotkeys()
     }
 
-    // MARK: - Recording Pipeline
+    // MARK: - Cost Warning
 
-    /// Start recording. If mode is nil, uses active mode. If captureScreen is true, captures screenshot first.
-    private func handleRecordStart(mode: Mode?, captureScreen: Bool) {
-        guard recordingState == .idle else { return }
-
-        let pipelineMode = mode ?? modeManager.activeMode
-        activePipelineMode = pipelineMode
-
-        // Check microphone permission
-        guard permissions.checkMicrophone() else {
-            LoggingService.shared.log("Microphone permission not granted", level: .error)
-            Task {
-                let granted = await AudioPermissionHelper.requestMicrophonePermission()
-                if !granted {
-                    LoggingService.shared.log("Microphone permission denied", level: .error)
-                }
-            }
-            return
-        }
-
-        // Check accessibility for paste modes
-        if pipelineMode.outputType == .paste && !permissions.checkAccessibility() {
-            LoggingService.shared.log("Accessibility permission not granted", level: .error)
-            permissions.openAccessibilitySettings()
-            return
-        }
-
-        // Capture screenshot for Vision mode before recording starts
-        if captureScreen {
-            Task {
-                do {
-                    let screenshot = try await screenCapture.captureActiveWindow()
-                    self.pendingScreenshot = screenshot
-                    LoggingService.shared.log("Vision screenshot captured (\(screenshot.count) bytes)")
-                    self.startAudioRecording()
-                } catch {
-                    LoggingService.shared.log("Screenshot failed: \(error)", level: .error)
-                    self.showError("Kunne ikke tage screenshot: \(error.localizedDescription)")
-                }
-            }
-        } else {
-            startAudioRecording()
-        }
-    }
-
-    private func startAudioRecording() {
-        do {
-            try audioCapture.startRecording()
-            recordingState = .recording
-            updateMenuBarIcon(state: .recording)
-        } catch {
-            LoggingService.shared.log("Audio recording failed: \(error)", level: .error)
-            showError("Mikrofonoptagelse fejlede: \(error.localizedDescription)")
-            activePipelineMode = nil
-            pendingScreenshot = nil
-        }
-    }
-
-    private func handleRecordStop() {
-        guard recordingState == .recording else { return }
-
-        let audioData = audioCapture.stopRecording()
-        recordingState = .processing
-        updateMenuBarIcon(state: .processing)
-
-        guard let pipelineMode = activePipelineMode else {
-            resetPipeline()
-            return
-        }
-
-        let screenshot = pendingScreenshot
-
-        Task {
-            await processRecording(audioData: audioData, screenshot: screenshot, mode: pipelineMode)
-        }
-    }
-
-    private func processRecording(audioData: Data, screenshot: Data?, mode: Mode) async {
-        let result: Result<String, Error>
-
-        if let screenshot {
-            result = await geminiClient.sendAudioWithImage(audioData, imageData: screenshot, mode: mode)
-        } else {
-            result = await geminiClient.sendAudio(audioData, mode: mode)
-        }
-
-        switch result {
-        case .success(let text):
-            LoggingService.shared.log("Gemini response: \(text.prefix(100))...")
-            deliverResult(text, mode: mode)
-        case .failure(let error):
-            LoggingService.shared.log("Gemini error: \(error)", level: .error)
-            showError("Fejl: \(error.localizedDescription)")
-        }
-
-        resetPipeline()
-    }
-
-    private func deliverResult(_ text: String, mode: Mode) {
-        switch mode.outputType {
-        case .paste:
-            let success = textInsertion.insertText(text)
-            if !success {
-                LoggingService.shared.log("Text insertion failed, showing in HUD", level: .warning)
-                hudController.show(content: text)
-            }
-        case .hud:
-            hudController.show(content: text)
-            ttsService.speak(text)
-        }
-    }
-
-    private func showError(_ message: String) {
-        hudController.show(content: "⚠️ \(message)")
-    }
-
-    // MARK: - HUD & TTS
-
-    private func setupHUDCallbacks() {
-        hudController.onSpeakRequested = { [weak self] text in
-            self?.ttsService.speakAlways(text)
+    private func setupCostWarning() {
+        usageTracker.onCostWarning = { [weak self] cost in
+            self?.hudController.showError(
+                "Omkostningsadvarsel: Dit månedlige forbrug har nået $\(String(format: "%.2f", cost))"
+            )
         }
     }
 
     // MARK: - First Launch
 
     private func checkFirstLaunch() {
-        let hasLaunched = UserDefaults.standard.bool(forKey: "hasLaunchedBefore")
+        let hasLaunched = UserDefaults.standard.bool(forKey: Constants.Defaults.hasLaunchedBefore)
         if !hasLaunched {
-            UserDefaults.standard.set(true, forKey: "hasLaunchedBefore")
+            UserDefaults.standard.set(true, forKey: Constants.Defaults.hasLaunchedBefore)
             showOnboarding()
         }
     }
-
-    private var onboardingWindow: NSWindow?
 
     private func showOnboarding() {
         let onboardingView = OnboardingView(
@@ -338,14 +258,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         onboardingWindow = window
-    }
-
-    private func resetPipeline() {
-        recordingState = .idle
-        updateMenuBarIcon(state: .idle)
-        activePipelineMode = nil
-        pendingScreenshot = nil
-        rebuildMenu()
     }
 }
 
