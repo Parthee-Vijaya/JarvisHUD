@@ -121,25 +121,40 @@ actor WebSearchService {
 
     // MARK: - Wikipedia (language-specific)
 
+    /// Uses Wikipedia's **fulltext search** (`action=query&list=search`) — returns
+    /// real search results with snippets, not just title matches. The fulltext
+    /// index covers article body content, so questions like "when did ukraine war
+    /// start" hit "Russo-Ukrainian war (2022–present)" with a matching snippet
+    /// even though no Wikipedia article is literally titled that.
+    ///
+    /// Each hit's page summary is then fetched in parallel via the REST API so
+    /// we have the opening paragraph as clean prose for the model.
     private func fetchWikipediaSummaries(query: String, lang: String, limit: Int) async -> [SearchResult] {
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let openURL = URL(string: "https://\(lang).wikipedia.org/w/api.php?action=opensearch&search=\(encoded)&limit=\(limit)&format=json") else {
+              let searchURL = URL(string: "https://\(lang).wikipedia.org/w/api.php?action=query&list=search&srsearch=\(encoded)&srlimit=\(limit)&srprop=snippet&format=json") else {
             return []
         }
-        guard let (data, _) = try? await session.data(from: openURL),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [Any],
-              root.count >= 4,
-              let titles = root[1] as? [String],
-              let urls = root[3] as? [String] else {
+        guard let (data, _) = try? await session.data(from: searchURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let query = root["query"] as? [String: Any],
+              let hits = query["search"] as? [[String: Any]] else {
             return []
         }
 
         var results: [SearchResult] = []
         await withTaskGroup(of: SearchResult?.self) { group in
-            for (index, title) in titles.enumerated() where index < limit {
-                let pageURL = (index < urls.count) ? urls[index] : ""
+            for hit in hits.prefix(limit) {
+                guard let title = hit["title"] as? String else { continue }
+                let rawSnippet = hit["snippet"] as? String ?? ""
+                // Strip Wikipedia's <span class="searchmatch"> markup from snippets.
+                let snippet = rawSnippet
+                    .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                    .replacingOccurrences(of: "&quot;", with: "\"")
+                    .replacingOccurrences(of: "&amp;", with: "&")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
                 group.addTask { [weak self] in
-                    await self?.fetchWikiSummary(title: title, pageURL: pageURL, lang: lang)
+                    await self?.fetchWikiSummary(title: title, fallbackSnippet: snippet, lang: lang)
                 }
             }
             for await result in group {
@@ -149,22 +164,30 @@ actor WebSearchService {
         return results
     }
 
-    private func fetchWikiSummary(title: String, pageURL: String, lang: String) async -> SearchResult? {
+    private func fetchWikiSummary(title: String, fallbackSnippet: String, lang: String) async -> SearchResult? {
         let normalised = title.replacingOccurrences(of: " ", with: "_")
+        let pageURL = "https://\(lang).wikipedia.org/wiki/\(normalised)"
+
         guard let encoded = normalised.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "https://\(lang).wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
-            return nil
+            // Fall back to raw snippet if even URL encoding fails.
+            return fallbackSnippet.isEmpty ? nil :
+                SearchResult(title: title, snippet: fallbackSnippet, url: pageURL)
         }
-        guard let (data, _) = try? await session.data(from: url),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let extract = root["extract"] as? String, !extract.isEmpty else {
-            return nil
+
+        // Try REST summary for the nice extract; fall back to the fulltext
+        // snippet if the summary endpoint 404s (redirects, disambigs, etc).
+        if let (data, _) = try? await session.data(from: url),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let extract = root["extract"] as? String, !extract.isEmpty {
+            return SearchResult(
+                title: (root["title"] as? String) ?? title,
+                snippet: extract,
+                url: pageURL
+            )
         }
-        return SearchResult(
-            title: (root["title"] as? String) ?? title,
-            snippet: extract,
-            url: pageURL.isEmpty ? "https://\(lang).wikipedia.org/wiki/\(normalised)" : pageURL
-        )
+        guard !fallbackSnippet.isEmpty else { return nil }
+        return SearchResult(title: title, snippet: fallbackSnippet, url: pageURL)
     }
 
     // MARK: - Language detection
