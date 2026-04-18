@@ -1,14 +1,17 @@
 import Foundation
-import GoogleGenerativeAI
 
-class ChatPipeline {
+/// Orchestrates multi-turn chat: takes user text, builds history, asks Gemini to
+/// stream a response, and appends tokens to the ChatSession as they arrive.
+///
+/// As of v5.0.0-alpha, no SDK-level `Chat` object is cached — the full history
+/// is rebuilt from `ChatSession` per turn (cheap) and sent to the REST API.
+final class ChatPipeline {
     private let geminiClient: GeminiClient
     private let chatSession: ChatSession
     private let hudController: HUDWindowController
     private let mode: Mode
     private let conversationStore = ConversationStore()
 
-    private var sdkChat: Chat?
     private var conversationID: UUID?
 
     init(
@@ -23,7 +26,7 @@ class ChatPipeline {
         self.mode = mode
     }
 
-    // MARK: - Text Message
+    // MARK: - Text
 
     func sendTextMessage(_ text: String) {
         chatSession.addUserMessage(text)
@@ -35,28 +38,22 @@ class ChatPipeline {
         }
     }
 
-    // MARK: - Voice Message (transcribe first, then chat)
+    // MARK: - Voice (transcribe first, then chat)
 
     func sendVoiceMessage(audioData: Data, transcribeMode: Mode) {
         chatSession.isStreaming = true
 
         Task {
-            // Step 1: Transcribe audio to text
             let transcribeResult = await geminiClient.sendAudio(audioData, mode: transcribeMode)
-
             switch transcribeResult {
             case .success(let transcript):
                 guard !transcript.isEmpty else {
                     chatSession.isStreaming = false
                     return
                 }
-                // Step 2: Add user message with transcript
                 chatSession.addUserMessage(transcript)
                 let placeholderID = chatSession.addAssistantMessage("")
-
-                // Step 3: Stream chat response
                 await streamResponse(placeholderID: placeholderID, text: transcript)
-
             case .failure(let error):
                 LoggingService.shared.log("Voice transcription failed: \(error)", level: .error)
                 chatSession.isStreaming = false
@@ -64,26 +61,15 @@ class ChatPipeline {
         }
     }
 
-    // MARK: - Streaming Core
+    // MARK: - Streaming core
 
     private func streamResponse(placeholderID: UUID, text: String) async {
-        // Lazily create SDK chat. Re-create each time the cached chat is nil (e.g. API key rotation)
-        // so a freshly-saved Keychain key is picked up without an app relaunch.
-        if sdkChat == nil {
-            if let (_, chat) = geminiClient.startChat(mode: mode, history: chatSession.toModelHistory().dropLast(1).map { $0 }) {
-                sdkChat = chat
-            } else {
-                chatSession.updateAssistant(id: placeholderID, text: "Fejl: Ingen API-nøgle fundet. Tilføj den i Indstillinger.")
-                chatSession.isStreaming = false
-                // Persist the error so it doesn't silently disappear; empty-text filter in
-                // toModelHistory strips it from subsequent API calls.
-                conversationID = conversationStore.saveSession(chatSession, existingID: conversationID)
-                return
-            }
-        }
+        // Build history from the session, dropping the trailing user message
+        // (which is passed separately to the REST call) and any empty placeholders.
+        let history = chatSession.currentHistory(excludingLastUser: true)
 
-        let result = await geminiClient.sendTextStreaming(
-            chat: sdkChat!,
+        let result = await geminiClient.sendChatStreaming(
+            history: history,
             text: text,
             mode: mode,
             onDelta: { [weak self] delta in
@@ -93,23 +79,22 @@ class ChatPipeline {
 
         switch result {
         case .success(let cleaned):
-            // Replace with post-processed text
             chatSession.updateAssistant(id: placeholderID, text: cleaned)
         case .failure(let error):
-            let errorText = chatSession.messages.first(where: { $0.id == placeholderID })?.text ?? ""
-            if errorText.isEmpty {
+            let existing = chatSession.messages.first(where: { $0.id == placeholderID })?.text ?? ""
+            if existing.isEmpty {
                 chatSession.updateAssistant(id: placeholderID, text: "Fejl: \(error.localizedDescription)")
             }
         }
 
         chatSession.isStreaming = false
-
-        // Auto-save conversation
         conversationID = conversationStore.saveSession(chatSession, existingID: conversationID)
     }
 
+    /// Called by AppDelegate after a Keychain key rotation. No cached state
+    /// survives a rotation in v5.0.0-alpha, so this just drops the conversation
+    /// pointer so the next message starts a new saved session.
     func reset() {
-        sdkChat = nil
         conversationID = nil
     }
 }

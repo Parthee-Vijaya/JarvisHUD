@@ -66,7 +66,6 @@
 			name = Jarvis;
 			packageProductDependencies = (
 				AA200020300000000000AAAA /* HotKey */,
-				AA200022300000000000AAAA /* GoogleGenerativeAI */,
 			);
 			productName = Jarvis;
 			productReference = AA200001300000000000AAAA /* Jarvis.app */;
@@ -98,7 +97,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA20001F300000000000AAAA /* XCRemoteSwiftPackageReference "HotKey" */,
-				AA200021300000000000AAAA /* XCRemoteSwiftPackageReference "generative-ai-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA200005300000000000AAAA /* Products */;
@@ -347,14 +345,6 @@
 				minimumVersion = 0.2.1;
 			};
 		};
-		AA200021300000000000AAAA /* XCRemoteSwiftPackageReference "generative-ai-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/google/generative-ai-swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.5.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -362,11 +352,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA20001F300000000000AAAA /* XCRemoteSwiftPackageReference "HotKey" */;
 			productName = HotKey;
-		};
-		AA200022300000000000AAAA /* GoogleGenerativeAI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA200021300000000000AAAA /* XCRemoteSwiftPackageReference "generative-ai-swift" */;
-			productName = GoogleGenerativeAI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

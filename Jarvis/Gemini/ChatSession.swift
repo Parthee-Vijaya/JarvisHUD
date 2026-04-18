@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import GoogleGenerativeAI
 
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: UUID
@@ -21,17 +20,18 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     }
 }
 
+/// Multi-turn chat session. v5.0.0-alpha removed the cached SDK `Chat` object —
+/// we now pass the full message history to `GeminiClient.sendChatStreaming`
+/// on each turn, which is what the REST API expects anyway. That means an
+/// API-key rotation takes effect immediately: no cached credentials sitting
+/// inside an SDK object.
 @Observable
 class ChatSession {
     var messages: [ChatMessage] = []
     var isStreaming = false
 
-    /// SDK chat object for multi-turn conversation
-    var sdkChat: Chat?
-
     func addUserMessage(_ text: String) {
-        let message = ChatMessage(role: .user, text: text)
-        messages.append(message)
+        messages.append(ChatMessage(role: .user, text: text))
     }
 
     func addAssistantMessage(_ text: String) -> UUID {
@@ -52,16 +52,24 @@ class ChatSession {
 
     func clear() {
         messages.removeAll()
-        sdkChat = nil
         isStreaming = false
     }
 
-    /// Convert messages to ModelContent history for Gemini SDK
-    func toModelHistory() -> [ModelContent] {
-        messages.compactMap { msg in
-            let role = msg.role == .user ? "user" : "model"
-            guard !msg.text.isEmpty else { return nil }
-            return ModelContent(role: role, parts: [.text(msg.text)])
+    /// Turn the message log into REST history suitable for
+    /// `GeminiClient.sendChatStreaming(history:)`. Drops empty assistant
+    /// placeholders (the streaming sentinel) and drops the trailing user
+    /// message (which the caller passes separately as `text`).
+    func currentHistory(excludingLastUser: Bool = true) -> [GeminiContent] {
+        var prepared: [GeminiContent] = []
+        for message in messages {
+            let role = message.role == .user ? "user" : "model"
+            let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            prepared.append(GeminiContent(role: role, parts: [.text(trimmed)]))
         }
+        if excludingLastUser, prepared.last?.role == "user" {
+            prepared.removeLast()
+        }
+        return prepared
     }
 }
