@@ -3,7 +3,7 @@ import AVFoundation
 enum Constants {
     // MARK: - App
     static let appName = "Jarvis"
-    static let appVersion = "4.1"
+    static let appVersion = "4.1.1"
     static let bundleID = "pavi.Jarvis"
 
     // MARK: - Keychain
