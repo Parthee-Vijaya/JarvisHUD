@@ -23,6 +23,8 @@ final class InfoModeService {
     private(set) var claudeStats: ClaudeStatsSnapshot = .empty
     private(set) var airQuality: AirQualitySnapshot?
     private(set) var moon: MoonSnapshot = MoonService.current()
+    private(set) var nextEvent: CalendarEventSnapshot?
+    private(set) var calendarAccess: CalendarService.AccessState = .notDetermined
 
     /// Convenience: DR headlines. Kept for call sites that expect it.
     var drHeadlines: [NewsHeadline] { newsBySource[.dr] ?? [] }
@@ -43,6 +45,7 @@ final class InfoModeService {
     private let systemInfoService = SystemInfoService()
     private let claudeStatsService = ClaudeStatsService()
     private let airQualityService = AirQualityService()
+    private let calendarService = CalendarService()
     private let cache = InfoCache()
 
     /// Guards against concurrent `refresh` calls. The view calls `.task` on appear
@@ -88,6 +91,7 @@ final class InfoModeService {
                 group.addTask { await self.loadNewsTile() }
                 group.addTask { await self.loadCommuteTile() }
                 group.addTask { await self.loadAirQualityTile() }
+                group.addTask { await self.loadCalendarTile() }
             }
             await MainActor.run {
                 self.lastRefresh = Date()
@@ -141,6 +145,22 @@ final class InfoModeService {
             coord = LocationService.naestvedCoordinate
         }
         self.airQuality = try? await airQualityService.fetch(for: coord)
+    }
+
+    private func loadCalendarTile() async {
+        self.calendarAccess = calendarService.accessState
+        guard calendarService.accessState == .granted else { return }
+        self.nextEvent = await calendarService.nextEvent()
+    }
+
+    /// Called from the Cockpit UI when the user taps the "Giv adgang"
+    /// button on the Kalender tile. Writes the resolved state back so the
+    /// tile either shows the next event or a persistent denial message.
+    func requestCalendarAccess() async {
+        self.calendarAccess = await calendarService.requestAccess()
+        if calendarService.accessState == .granted {
+            self.nextEvent = await calendarService.nextEvent()
+        }
     }
 
     private func loadCommuteTile() async {

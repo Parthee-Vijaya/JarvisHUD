@@ -86,6 +86,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// v1.1.8: handle incoming `jarvis://…` URLs from the OS / Shortcuts /
+    /// automation tools. Supported:
+    ///   - jarvis://chat?prompt=TEXT      — open chat, pre-fill the bar
+    ///   - jarvis://qna?prompt=TEXT       — run Q&A with the given prompt
+    ///   - jarvis://summarize             — open picker + summarize
+    ///   - jarvis://vision?prompt=TEXT    — capture screen + ask
+    ///   - jarvis://info / ://briefing    — open the respective panel
+    nonisolated func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated {
+            for url in urls { handleJarvisURL(url) }
+        }
+    }
+
+    private func handleJarvisURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "jarvis" else { return }
+        let action = (url.host ?? "").lowercased()
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let prompt = components?.queryItems?.first(where: { $0.name == "prompt" })?.value ?? ""
+
+        switch action {
+        case "chat":
+            refreshConversationHistory()
+            hudController.showChat()
+            if !prompt.isEmpty { chatInputBuffer.text = prompt }
+        case "qna":
+            refreshConversationHistory()
+            hudController.showChat()
+            if !prompt.isEmpty, let router = commandRouter {
+                Task { await router.run(mode: BuiltInModes.qna, input: prompt) }
+            }
+        case "summarize":
+            summaryService.summarizeInteractively()
+        case "vision":
+            refreshConversationHistory()
+            hudController.showChat()
+            if let router = commandRouter {
+                Task { await router.run(mode: BuiltInModes.vision, input: prompt) }
+            }
+        case "info", "cockpit":
+            hudController.showInfoMode()
+        case "briefing", "uptodate":
+            hudController.showUptodate()
+        default:
+            LoggingService.shared.log("Unknown jarvis:// action: \(action)", level: .warning)
+        }
+    }
+
     // MARK: - Pipeline Setup
 
     private func setupPipeline() {

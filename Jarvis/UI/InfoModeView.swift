@@ -79,6 +79,59 @@ struct InfoModeView: View {
         HStack(alignment: .top, spacing: 12) {
             airQualityTile
             moonTile
+            calendarTile
+        }
+    }
+
+    private var calendarTile: some View {
+        tile(title: "Kalender", icon: "calendar") {
+            switch service.calendarAccess {
+            case .granted:
+                if let event = service.nextEvent {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(event.title)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                        Text(event.prettyStart)
+                            .font(.caption)
+                            .foregroundStyle(JarvisTheme.brightCyan)
+                        if let minutes = event.minutesUntilStart, minutes > 0 {
+                            Text("om \(minutes) min")
+                                .font(.caption2)
+                                .foregroundStyle(JarvisTheme.neonCyan.opacity(0.7))
+                        }
+                        if let location = event.location, !location.isEmpty {
+                            HStack(spacing: 3) {
+                                Image(systemName: "mappin.and.ellipse")
+                                    .font(.caption2)
+                                Text(location)
+                                    .font(.caption2)
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(JarvisTheme.neonCyan.opacity(0.55))
+                        }
+                    }
+                } else {
+                    Text("Ingen events de næste 7 dage")
+                        .font(.caption2)
+                        .foregroundStyle(JarvisTheme.neonCyan.opacity(0.6))
+                }
+            case .notDetermined:
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Giv adgang til din kalender for at se næste event her.")
+                        .font(.caption2)
+                        .foregroundStyle(JarvisTheme.neonCyan.opacity(0.7))
+                    Button("Giv adgang") {
+                        Task { await service.requestCalendarAccess() }
+                    }
+                    .controlSize(.small)
+                }
+            case .denied, .writeOnly:
+                Text("Kalender-adgang blokeret i System-indstillinger.")
+                    .font(.caption2)
+                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.55))
+            }
         }
     }
 
