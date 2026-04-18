@@ -265,26 +265,28 @@ final class GeminiClient {
         return output
     }
 
-    /// If the model obeyed the system prompt it already appended a Kilder section.
-    /// This guarantees it's there even if the model slipped — and upgrades the
-    /// section with any extra sources Gemini found via googleSearch tool.
+    /// Guarantees the answer ends with a **Kilder** section containing every
+    /// source we have, deduped. Strips any footer the model produced first so
+    /// we don't end up with two sections after merging grounding metadata.
+    ///
+    /// α.12 simplified this: the α.10 version used a regex with `.anchored` +
+    /// alternation, which Foundation's NSRegularExpression only honours on the
+    /// first alternation branch. We now scan for a small set of literal header
+    /// markers and keep everything before the earliest match.
     private static func ensureSourcesFooter(rawAnswer: String, sources: [SearchResult]) -> String {
         guard !sources.isEmpty else { return rawAnswer }
 
-        // Strip any existing "Kilder" section so we can rebuild with merged list.
-        let stripped: String
-        if let range = rawAnswer.range(of: "\\*\\*Kilder\\*\\*|^Kilder$|^##\\s*Kilder",
-                                        options: [.regularExpression, .anchored],
-                                        range: rawAnswer.startIndex..<rawAnswer.endIndex) {
-            // Shouldn't happen normally — the regex above is anchored weirdly so bail.
-            stripped = String(rawAnswer[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if let kilderRange = rawAnswer.range(of: "\n**Kilder**", options: .literal)
-                    ?? rawAnswer.range(of: "\n## Kilder", options: .literal)
-                    ?? rawAnswer.range(of: "\nKilder:", options: .literal) {
-            stripped = String(rawAnswer[..<kilderRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            stripped = rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let markers = ["\n**Kilder**", "\n## Kilder", "\n### Kilder", "\nKilder:", "\n**Sources**", "\nSources:"]
+        var earliest: String.Index? = nil
+        for marker in markers {
+            if let range = rawAnswer.range(of: marker, options: .literal) {
+                if earliest == nil || range.lowerBound < earliest! {
+                    earliest = range.lowerBound
+                }
+            }
         }
+        let beforeFooter = earliest.map { String(rawAnswer[..<$0]) } ?? rawAnswer
+        let stripped = beforeFooter.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let footer = sources.enumerated()
             .map { (index, src) in "\(index + 1). [\(src.title)](\(src.url))" }

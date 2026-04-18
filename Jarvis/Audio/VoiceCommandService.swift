@@ -27,6 +27,13 @@ final class VoiceCommandService {
     var onCommand: ((Command) -> Void)?
     private(set) var isActive: Bool = false
     private(set) var latestPartial: String = ""
+    /// When true the partial-match pipeline is silenced but the recognizer
+    /// keeps running in the background. Used during active recording windows
+    /// so the recognizer's rolling buffer can't fire a *second* command from
+    /// the user's continued speech (e.g. "Jarvis spørg hvem er kongen" —
+    /// after dispatch of .qna, we don't want the tail "hvem er kongen" to
+    /// match another command key).
+    private(set) var isSuspended: Bool = false
 
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -123,9 +130,28 @@ final class VoiceCommandService {
         }
     }
 
+    // MARK: - Suspend / resume
+
+    /// Temporarily stop dispatching commands. Call this when the user's current
+    /// utterance is already being handled (e.g. a push-to-talk window launched
+    /// via voice command) so continued speech doesn't fire another command.
+    func suspend() {
+        isSuspended = true
+    }
+
+    func resume() {
+        isSuspended = false
+        latestPartial = ""
+        // Reset the debounce so the next "jarvis X" command isn't held off
+        // by the one we just handled.
+        lastCommand = nil
+        lastCommandAt = .distantPast
+    }
+
     // MARK: - Pattern matching
 
     private func handle(partial: String) {
+        guard !isSuspended else { return }
         let lowered = partial.lowercased()
         guard lowered.contains("jarvis") else { return }
 

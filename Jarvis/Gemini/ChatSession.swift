@@ -59,6 +59,11 @@ class ChatSession {
     /// `GeminiClient.sendChatStreaming(history:)`. Drops empty assistant
     /// placeholders (the streaming sentinel) and drops the trailing user
     /// message (which the caller passes separately as `text`).
+    ///
+    /// The Gemini REST API also requires history to end on a `model` turn
+    /// (or be empty). α.12 adds a defensive trim that ensures we never send
+    /// history ending on a `user` turn — if the session is corrupted (e.g.
+    /// crash-recovered mid-turn) we walk back to the last valid model reply.
     func currentHistory(excludingLastUser: Bool = true) -> [GeminiContent] {
         var prepared: [GeminiContent] = []
         for message in messages {
@@ -68,6 +73,12 @@ class ChatSession {
             prepared.append(GeminiContent(role: role, parts: [.text(trimmed)]))
         }
         if excludingLastUser, prepared.last?.role == "user" {
+            prepared.removeLast()
+        }
+        // Defensive: a valid history for Gemini ends on a model turn (or is
+        // empty). Trim any trailing user messages that would otherwise confuse
+        // the API or the model into re-answering them.
+        while prepared.last?.role == "user" {
             prepared.removeLast()
         }
         return prepared

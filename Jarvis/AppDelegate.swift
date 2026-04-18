@@ -442,17 +442,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case .chat:
                 if !self.hudController.isChatVisible { self.hudController.showChat() }
             case .qna:
-                self.pipeline.handleRecordStart(mode: BuiltInModes.qna, captureScreen: false)
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(4))
-                    self?.pipeline.handleRecordStop()
-                }
+                self.runVoiceRecording(mode: BuiltInModes.qna)
             case .translate:
-                self.pipeline.handleRecordStart(mode: BuiltInModes.translate, captureScreen: false)
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(4))
-                    self?.pipeline.handleRecordStop()
-                }
+                self.runVoiceRecording(mode: BuiltInModes.translate)
             case .summarize:
                 self.summaryService.summarizeInteractively()
             }
@@ -470,6 +462,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             await self.voiceCommandService.prepare()
             self.refreshVoiceCommands()
+        }
+    }
+
+    /// Run a 4-second recording window triggered by a voice command. Mutes the
+    /// voice-command recogniser for the duration so the tail of the same
+    /// utterance doesn't re-trigger a second command.
+    private func runVoiceRecording(mode: Mode) {
+        voiceCommandService.suspend()
+        pipeline.handleRecordStart(mode: mode, captureScreen: false)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            self?.pipeline.handleRecordStop()
+            // Give the recogniser a moment to drain its buffer before we
+            // re-enable matching — another ~500ms of silence.
+            try? await Task.sleep(for: .milliseconds(500))
+            self?.voiceCommandService.resume()
         }
     }
 
