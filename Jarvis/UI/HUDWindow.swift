@@ -102,6 +102,9 @@ class HUDWindowController {
     func close() {
         cancelAutoClose()
         cancelRecordingTimer()
+        notchPhaseObserver?.cancel()
+        notchPhaseObserver = nil
+        notchMetrics = nil
         panel?.close()
         panel = nil
         hudState.isVisible = false
@@ -190,31 +193,65 @@ class HUDWindowController {
         let hostingController = NSHostingController(rootView: contentView)
 
         let panel = NSPanel(contentViewController: hostingController)
-        // statusBar-level + 1 keeps the pill above the system menu bar so it visually
-        // extends the notch. .borderless + clear background lets the SwiftUI shape show through.
         panel.styleMask = [.borderless, .nonactivatingPanel]
         panel.level = NSWindow.Level(Int(CGWindowLevelForKey(.statusWindow)) + 1)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.isMovableByWindowBackground = false  // pinned to the notch
+        panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.ignoresMouseEvents = false
 
+        self.panel = panel
+        self.notchMetrics = metrics
+        applyNotchFrame(for: hudState.currentPhase, animate: false)
+
+        panel.orderFrontRegardless()
+        hudState.isVisible = true
+
+        // Re-size the pill whenever the phase flips (recording → processing → result).
+        // Captures a weak self and watches the observable HUDState for phase equality change.
+        observeNotchPhaseChanges()
+    }
+
+    /// Weak-held metrics + phase observer so `applyNotchFrame` can react to phase
+    /// changes after the panel is created.
+    private var notchMetrics: NotchDetector.NotchMetrics?
+    private var notchPhaseObserver: Task<Void, Never>?
+
+    private func observeNotchPhaseChanges() {
+        notchPhaseObserver?.cancel()
+        notchPhaseObserver = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var lastPhase = self.hudState.currentPhase
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard !Task.isCancelled else { return }
+                let current = self.hudState.currentPhase
+                if current != lastPhase {
+                    self.applyNotchFrame(for: current, animate: true)
+                    lastPhase = current
+                }
+                if self.panel == nil { return }
+            }
+        }
+    }
+
+    private func applyNotchFrame(for phase: HUDState.Phase, animate: Bool) {
+        guard let panel, let metrics = notchMetrics else { return }
         let w = Constants.NotchHUD.expandedWidth
-        let h = Constants.NotchHUD.maxHeight
-        // In AppKit's flipped screen coords, screen.frame.maxY is the TOP of the screen.
-        // We position the panel so its top edge sits just under (slightly over) the notch
-        // bottom so the pill visually connects to the notch cutout.
+        let h: CGFloat
+        switch phase {
+        case .result, .error, .permissionError:
+            h = Constants.NotchHUD.resultHeight
+        default:
+            h = Constants.NotchHUD.compactHeight
+        }
         let topY = metrics.notchBottomY + Constants.NotchHUD.notchOverlap
         let x = metrics.notchCenterX - w / 2
         let y = topY - h
-        panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
-
-        panel.orderFrontRegardless()
-        self.panel = panel
-        hudState.isVisible = true
+        panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true, animate: animate)
     }
 
     // MARK: - Chat Panel

@@ -85,16 +85,19 @@ enum Constants {
 
     // MARK: - Notch HUD dimensions
     enum NotchHUD {
-        /// Width of the pill when showing processing (matches notch width).
-        static let collapsedWidth: CGFloat = 240
-        /// Width when showing recording / result content.
-        static let expandedWidth: CGFloat = 460
-        /// Max height when result text is long.
-        static let maxHeight: CGFloat = 320
-        /// Corner radius on the bottom of the pill — pairs visually with the notch cutout.
-        static let cornerRadius: CGFloat = 22
-        /// Overlap into the notch (pixels we push above notch bottom) to hide the seam.
-        static let notchOverlap: CGFloat = 6
+        /// Width for recording / processing — matches Apple's Dynamic Island-style layout
+        /// on MacBooks where the pill extends roughly 3× the notch width.
+        static let expandedWidth: CGFloat = 640
+        /// Height during recording / processing.
+        static let compactHeight: CGFloat = 150
+        /// Height when showing a result block with wrapped text.
+        static let resultHeight: CGFloat = 230
+        /// Bottom-corner radius — tall + pronounced so it reads as an extension of the notch.
+        static let cornerRadius: CGFloat = 32
+        /// How many points we push the pill above the physical notch bottom to hide the seam.
+        static let notchOverlap: CGFloat = 4
+        /// Width of the left visualisation column (arc reactor + oscilloscope).
+        static let visualColumnWidth: CGFloat = 84
     }
 
     // MARK: - Gemini Models
