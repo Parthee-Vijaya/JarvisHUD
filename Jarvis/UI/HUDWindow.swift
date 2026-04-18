@@ -287,7 +287,7 @@ class HUDWindowController {
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.minSize = NSSize(width: 440, height: 200)
+        panel.minSize = NSSize(width: 600, height: 200)
 
         // Intrinsic-size-driven: let the hosting controller pick the height,
         // then pin the panel to the top-right of the visible screen.

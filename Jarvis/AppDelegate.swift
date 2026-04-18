@@ -206,7 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         infoItem.keyEquivalentModifierMask = [.option]
         statusMenu.addItem(infoItem)
 
-        let uptodateItem = NSMenuItem(title: "Uptodate (vejr + nyheder)", action: #selector(openUptodateFromMenu), keyEquivalent: "u")
+        let uptodateItem = NSMenuItem(title: "Briefing", action: #selector(openUptodateFromMenu), keyEquivalent: "u")
         uptodateItem.target = self
         uptodateItem.keyEquivalentModifierMask = [.option]
         statusMenu.addItem(uptodateItem)

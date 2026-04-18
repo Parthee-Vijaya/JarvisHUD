@@ -26,9 +26,9 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         case .translate:   return "Translate"
         case .cycleMode:   return "Cycle active mode"
         case .toggleChat:  return "Toggle chat window"
-        case .uptodate:    return "Uptodate (vejr + nyheder)"
+        case .uptodate:    return "Briefing (nyheder + historie)"
         case .summarize:   return "Summarize dokument"
-        case .infoMode:    return "Info mode (system + commute)"
+        case .infoMode:    return "Cockpit (vejr + system)"
         case .agent:       return "Agent (filoperationer via Claude)"
         }
     }

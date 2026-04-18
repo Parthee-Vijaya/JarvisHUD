@@ -37,7 +37,7 @@ struct InfoModeView: View {
             Image(systemName: "info.circle.fill")
                 .foregroundStyle(JarvisTheme.neonCyan)
                 .shadow(color: JarvisTheme.neonCyan.opacity(0.7), radius: 4)
-            Text("Info")
+            Text("Cockpit")
                 .font(.headline)
                 .foregroundStyle(JarvisTheme.brightCyan)
             if let last = service.lastRefresh {
