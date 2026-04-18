@@ -72,14 +72,14 @@ struct UptodateView: View {
     private var topRow: some View {
         HStack(alignment: .top, spacing: 12) {
             newsSourceTile(.dr)
-            newsSourceTile(.tv2)
+            newsSourceTile(.politiken)
             newsSourceTile(.bbc)
         }
     }
 
     private var middleRow: some View {
         HStack(alignment: .top, spacing: 12) {
-            newsSourceTile(.cnn)
+            newsSourceTile(.guardian)
             newsSourceTile(.reddit)
             newsSourceTile(.hackernews)
         }
@@ -120,9 +120,9 @@ struct UptodateView: View {
 
     private func sourceIcon(for source: NewsHeadline.Source) -> String {
         switch source {
-        case .dr, .tv2, .bbc, .cnn: return "newspaper"
-        case .reddit:               return "bubble.left.and.bubble.right"
-        case .hackernews:           return "terminal"
+        case .dr, .politiken, .bbc, .guardian: return "newspaper"
+        case .reddit:                          return "bubble.left.and.bubble.right"
+        case .hackernews:                      return "terminal"
         }
     }
 

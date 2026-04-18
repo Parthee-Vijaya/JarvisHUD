@@ -3,14 +3,18 @@ import Foundation
 /// One news headline. Source lets the UI render the right badge.
 struct NewsHeadline: Identifiable, Equatable, Codable {
     enum Source: String, Codable, Identifiable, CaseIterable {
-        case dr, tv2, bbc, cnn, reddit, hackernews
+        // TV2 and CNN killed their RSS feeds in early 2026 (TV2 returns 404,
+        // CNN's rss.cnn.com has a dead TLS cert + all edition.cnn.com/rss/*
+        // paths 404). Swapped for Politiken (same DK-mainstream niche) and
+        // The Guardian (same reliable-international-English niche).
+        case dr, politiken, bbc, guardian, reddit, hackernews
         var id: String { rawValue }
         var displayName: String {
             switch self {
             case .dr:         return "DR"
-            case .tv2:        return "TV2"
+            case .politiken:  return "Politiken"
             case .bbc:        return "BBC"
-            case .cnn:        return "CNN"
+            case .guardian:   return "Guardian"
             case .reddit:     return "Reddit"
             case .hackernews: return "Hacker News"
             }
@@ -18,18 +22,18 @@ struct NewsHeadline: Identifiable, Equatable, Codable {
         var feedURL: URL {
             switch self {
             case .dr:         return URL(string: "https://www.dr.dk/nyheder/service/feeds/allenyheder")!
-            case .tv2:        return URL(string: "https://nyheder.tv2.dk/rss")!
+            case .politiken:  return URL(string: "https://politiken.dk/rss/senestenyt.rss")!
             case .bbc:        return URL(string: "https://feeds.bbci.co.uk/news/world/rss.xml")!
-            case .cnn:        return URL(string: "https://rss.cnn.com/rss/edition.rss")!
+            case .guardian:   return URL(string: "https://www.theguardian.com/world/rss")!
             case .reddit:     return URL(string: "https://www.reddit.com/r/news/.rss")!
             case .hackernews: return URL(string: "https://hnrss.org/frontpage")!
             }
         }
 
-        /// Sources that show up in the Info-mode segmented picker. Keeps Info
-        /// focused on mainstream news while the Uptodate panel aggregates
+        /// Sources that show up in the Info-mode segmented picker. Keeps the
+        /// Cockpit focused on mainstream news while Briefing aggregates
         /// everything (including Reddit + Hacker News).
-        static let infoPanelSources: [Source] = [.dr, .tv2, .bbc, .cnn]
+        static let infoPanelSources: [Source] = [.dr, .politiken, .bbc, .guardian]
     }
 
     let id: String              // GUID or URL (whichever the feed provides)

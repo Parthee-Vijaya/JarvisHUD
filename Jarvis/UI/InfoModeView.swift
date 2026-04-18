@@ -706,6 +706,10 @@ struct InfoModeView: View {
         }
         .padding(12)
         .frame(maxWidth: fullWidth ? .infinity : nil, alignment: .leading)
+        // maxHeight: .infinity only applies in-row — when the tile is one of
+        // several in an HStack, every tile stretches to match the tallest.
+        // fullWidth tiles keep their natural height.
+        .frame(maxHeight: fullWidth ? nil : .infinity, alignment: .topLeading)
         .background {
             RoundedRectangle(cornerRadius: 10)
                 .fill(JarvisTheme.surfaceElevated.opacity(0.65))
