@@ -16,10 +16,8 @@ struct HUDContentView: View {
     var onPermissionAction: (() -> Void)?
     var chatSession: ChatSession?
     var onChatSend: ((String) -> Void)?
-    var onChatVoice: (() -> Void)?
     var onPin: (() -> Void)?
     // Agent-mode plumbing (β.2)
-    var agentChatSession: ChatSession?
     var onAgentChatSend: ((String) -> Void)?
     var onAgentApprove: (() -> Void)?
     var onAgentReject: (() -> Void)?
@@ -33,6 +31,11 @@ struct HUDContentView: View {
     var hasGeminiKey: Bool = false
     var hasAnthropicKey: Bool = false
     var onOpenSettings: (() -> Void)?
+    // v1.1.5 history sidebar wiring
+    var conversationHistory: [ConversationStore.Metadata] = []
+    var currentConversationID: UUID?
+    var onLoadConversation: ((UUID) -> Void)?
+    var onDeleteConversation: ((UUID) -> Void)?
 
     @State private var appeared = false
 
@@ -90,15 +93,13 @@ struct HUDContentView: View {
             errorView(message: message)
         case .permissionError(let permission, let instructions):
             permissionErrorView(permission: permission, instructions: instructions)
-        case .chat, .agentChat:
-            // β.11: chat and agent chat share one unified panel. Agent mode is
-            // picked via the command-bar dropdown rather than opening a
-            // separate phase.
+        case .chat:
+            // v1.1.4+: chat and agent chat share one unified panel. Agent mode
+            // is picked via the command-bar dropdown.
             if let chatSession, let onChatSend {
                 ChatView(
                     chatSession: chatSession,
                     onSend: onChatSend,
-                    onVoice: onChatVoice,
                     onClose: onClose,
                     onPin: { onPin?() },
                     isPinned: state.isPinned,
@@ -109,6 +110,10 @@ struct HUDContentView: View {
                     shortcutLookup: shortcutLookup,
                     inputBuffer: inputBuffer,
                     onToggleVoiceRecord: onToggleVoiceRecord,
+                    conversationHistory: conversationHistory,
+                    currentConversationID: currentConversationID,
+                    onLoadConversation: onLoadConversation,
+                    onDeleteConversation: onDeleteConversation,
                     permissionsManager: permissionsManager,
                     hasGeminiKey: hasGeminiKey,
                     hasAnthropicKey: hasAnthropicKey,

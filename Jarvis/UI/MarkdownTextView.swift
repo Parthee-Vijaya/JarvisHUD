@@ -126,12 +126,12 @@ struct MarkdownTextView: View {
 
             Divider()
 
-            // Code content
+            // Code content — syntax-highlighted for the common languages,
+            // plain monospace for unknown ones. Raw source still goes through
+            // the Copy button above unchanged.
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(content)
-                    .font(.system(.caption, design: .monospaced))
+                Text(SyntaxHighlighter.highlight(content, language: language))
                     .textSelection(.enabled)
-                    .foregroundStyle(.primary)
                     .padding(10)
             }
         }

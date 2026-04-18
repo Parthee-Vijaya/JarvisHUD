@@ -16,9 +16,6 @@ class HUDWindowController {
     var updatesService: UpdatesService?
     /// Set by AppDelegate once services exist, then passed into InfoModeView.
     var infoModeService: InfoModeService?
-    /// Agent-mode chat (separate session from regular Gemini chat so the two
-    /// don't mix history).
-    var agentChatSession: ChatSession?
     var onAgentChatSend: ((String) -> Void)?
     var onAgentApprove: (() -> Void)?
     var onAgentReject: (() -> Void)?
@@ -28,7 +25,6 @@ class HUDWindowController {
     var onMaxRecordingReached: (() -> Void)?
     var onPermissionAction: (() -> Void)?
     var onChatSend: ((String) -> Void)?
-    var onChatVoice: (() -> Void)?
     var onPinToggle: (() -> Void)?
     var chatSession: ChatSession?
     // β.11: unified chat command-bar wiring.
@@ -41,6 +37,11 @@ class HUDWindowController {
     var hasGeminiKey: Bool = false
     var hasAnthropicKey: Bool = false
     var onOpenSettings: (() -> Void)?
+    // v1.1.5 history sidebar
+    var conversationHistory: [ConversationStore.Metadata] = []
+    var currentConversationID: UUID?
+    var onLoadConversation: ((UUID) -> Void)?
+    var onDeleteConversation: ((UUID) -> Void)?
 
     private var recordingStartTime: Date?
 
@@ -102,18 +103,15 @@ class HUDWindowController {
         hudState.isVisible && hudState.currentPhase == .chat
     }
 
+    /// Opens the chat panel — agent tooling is activated by picking the
+    /// Agent mode from the command-bar dropdown. Kept as a named function so
+    /// the ⌥⇧A hotkey has a stable entry point.
     func showAgentChat() {
-        cancelRecordingTimer()
-        hudState.currentPhase = .agentChat
-        if panel == nil {
-            presentChatPanel()
-        } else {
-            resizePanelForChat()
-        }
+        showChat()
     }
 
     var isAgentChatVisible: Bool {
-        hudState.isVisible && hudState.currentPhase == .agentChat
+        isChatVisible
     }
 
     func showUptodate() {
@@ -175,9 +173,7 @@ class HUDWindowController {
             onPermissionAction: { [weak self] in self?.onPermissionAction?() },
             chatSession: chatSession,
             onChatSend: { [weak self] text in self?.onChatSend?(text) },
-            onChatVoice: onChatVoice != nil ? { [weak self] in self?.onChatVoice?() } : nil,
             onPin: { [weak self] in self?.onPinToggle?() },
-            agentChatSession: agentChatSession,
             onAgentChatSend: onAgentChatSend != nil ? { [weak self] text in self?.onAgentChatSend?(text) } : nil,
             onAgentApprove: onAgentApprove != nil ? { [weak self] in self?.onAgentApprove?() } : nil,
             onAgentReject: onAgentReject != nil ? { [weak self] in self?.onAgentReject?() } : nil,
@@ -189,7 +185,11 @@ class HUDWindowController {
             permissionsManager: permissionsManager,
             hasGeminiKey: hasGeminiKey,
             hasAnthropicKey: hasAnthropicKey,
-            onOpenSettings: onOpenSettings != nil ? { [weak self] in self?.onOpenSettings?() } : nil
+            onOpenSettings: onOpenSettings != nil ? { [weak self] in self?.onOpenSettings?() } : nil,
+            conversationHistory: conversationHistory,
+            currentConversationID: currentConversationID,
+            onLoadConversation: onLoadConversation != nil ? { [weak self] id in self?.onLoadConversation?(id) } : nil,
+            onDeleteConversation: onDeleteConversation != nil ? { [weak self] id in self?.onDeleteConversation?(id) } : nil
         )
     }
 

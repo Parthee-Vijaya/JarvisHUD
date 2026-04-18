@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Chat HUD — β.11 Spotlight-style. Command bar on top unifies mode
 /// launching; message list below renders all modes' output as bubbles.
@@ -7,7 +8,6 @@ struct ChatView: View {
     /// Legacy send (Gemini-only). Kept so the old path still compiles while
     /// the router path rolls out — nil means "route through commandRouter".
     let onSend: (String) -> Void
-    let onVoice: (() -> Void)?
     let onClose: () -> Void
     let onPin: () -> Void
     let isPinned: Bool
@@ -27,6 +27,11 @@ struct ChatView: View {
     /// Toggle chat-mode mic recording. AppDelegate wires this to start/stop
     /// AudioCaptureManager and transcribe into `inputBuffer.text`.
     var onToggleVoiceRecord: (() -> Void)? = nil
+    // v1.1.5 sidebar plumbing
+    var conversationHistory: [ConversationStore.Metadata] = []
+    var currentConversationID: UUID? = nil
+    var onLoadConversation: ((UUID) -> Void)? = nil
+    var onDeleteConversation: ((UUID) -> Void)? = nil
     /// Optional hint-row dependencies. When all are present, `ChatHintRow` is
     /// rendered below the command bar; any missing piece hides the row.
     var permissionsManager: PermissionsManager? = nil
@@ -37,6 +42,8 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var selectedMode: Mode = BuiltInModes.chat
     @State private var fallbackCommandText: String = ""
+    @State private var isDropTargeted: Bool = false
+    @State private var showHistorySidebar: Bool = false
     @FocusState private var inputFocused: Bool
 
     /// When the shared `ChatInputBuffer` is provided, bind through to it so
@@ -56,6 +63,27 @@ struct ChatView: View {
     }
 
     var body: some View {
+        HStack(spacing: 0) {
+            if showHistorySidebar, onLoadConversation != nil {
+                ConversationSidebar(
+                    conversations: conversationHistory,
+                    currentID: currentConversationID,
+                    onSelect: { id in
+                        onLoadConversation?(id)
+                        // keep sidebar open so user can hop between chats
+                    },
+                    onDelete: { id in onDeleteConversation?(id) },
+                    onClose: { showHistorySidebar = false }
+                )
+                .transition(.move(edge: .leading))
+                Divider().background(JarvisTheme.hairline)
+            }
+            mainColumn
+        }
+        .animation(.easeInOut(duration: 0.18), value: showHistorySidebar)
+    }
+
+    private var mainColumn: some View {
         VStack(spacing: 0) {
             if commandRouter != nil {
                 ChatCommandBar(
@@ -73,7 +101,9 @@ struct ChatView: View {
                     isPinned: isPinned,
                     isRecording: inputBuffer?.isRecording ?? false,
                     isTranscribing: inputBuffer?.isTranscribing ?? false,
-                    onToggleRecord: onToggleVoiceRecord
+                    onToggleRecord: onToggleVoiceRecord,
+                    onToggleHistory: onLoadConversation != nil ? { showHistorySidebar.toggle() } : nil,
+                    isHistoryOpen: showHistorySidebar
                 )
                 if let permissionsManager, let onOpenSettings {
                     ChatHintRow(
@@ -101,9 +131,41 @@ struct ChatView: View {
             minWidth: Constants.ChatHUD.minWidth,
             minHeight: Constants.ChatHUD.minHeight
         )
+        .overlay(dropHighlight)
+        .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
         .onAppear {
             DispatchQueue.main.async { inputFocused = true }
         }
+    }
+
+    // MARK: - Drag-drop
+
+    @ViewBuilder
+    private var dropHighlight: some View {
+        if isDropTargeted {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(JarvisTheme.accent.opacity(0.7), lineWidth: 2)
+                .padding(2)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let router = commandRouter else { return false }
+        guard let provider = providers.first else { return false }
+
+        // v1.1.5-α.1 scope: single-file drops. Multi-file expansion is α.2+.
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            let prefill = commandTextBinding.wrappedValue
+            Task { @MainActor in
+                commandTextBinding.wrappedValue = ""
+                await router.runDropped(url: url, prefilledText: prefill)
+            }
+        }
+        return true
     }
 
     // MARK: - Confirmation card
@@ -256,8 +318,13 @@ struct ChatView: View {
                         emptyState
                     }
                     ForEach(chatSession.messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id)
+                        MessageBubble(
+                            message: message,
+                            onRetry: commandRouter.map { router in
+                                { msg in Task { await router.retry(msg) } }
+                            }
+                        )
+                        .id(message.id)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -392,21 +459,6 @@ struct ChatView: View {
 
     private var inputBar: some View {
         HStack(spacing: 10) {
-            if let onVoice {
-                Button(action: onVoice) {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(JarvisTheme.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(JarvisTheme.surfaceElevated)
-                        )
-                }
-                .buttonStyle(.plain)
-                .help("Tal til Jarvis")
-            }
-
             TextField("Skriv en besked…", text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))

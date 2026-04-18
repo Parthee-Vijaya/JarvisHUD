@@ -50,9 +50,11 @@ final class AgentChatPipeline {
                 chatSession.updateAssistant(id: placeholderID, text: result.finalAnswer)
                 chatSession.agentToolInvocations.append(contentsOf: result.toolInvocations)
             } catch {
-                chatSession.updateAssistant(
+                chatSession.markAssistantError(
                     id: placeholderID,
-                    text: "Fejl: \(error.localizedDescription)"
+                    errorText: "Fejl: \(error.localizedDescription)",
+                    sourceModeID: BuiltInModes.agent.id,
+                    sourcePrompt: text
                 )
             }
             chatSession.isStreaming = false

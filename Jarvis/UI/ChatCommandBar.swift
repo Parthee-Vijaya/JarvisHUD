@@ -24,6 +24,10 @@ struct ChatCommandBar: View {
     let isRecording: Bool
     let isTranscribing: Bool
     let onToggleRecord: (() -> Void)?
+    /// v1.1.5 history sidebar toggle. Nil hides the button entirely (legacy
+    /// callers that don't have conversation plumbing).
+    var onToggleHistory: (() -> Void)? = nil
+    var isHistoryOpen: Bool = false
 
     @FocusState private var inputFocused: Bool
 
@@ -52,6 +56,14 @@ struct ChatCommandBar: View {
                 .frame(height: 18)
                 .background(JarvisTheme.hairline)
 
+            if let onToggleHistory {
+                headerIconButton(
+                    system: "clock.arrow.circlepath",
+                    active: isHistoryOpen,
+                    help: isHistoryOpen ? "Skjul historik" : "Vis historik",
+                    action: onToggleHistory
+                )
+            }
             headerIconButton(system: isPinned ? "pin.fill" : "pin",
                              active: isPinned, help: isPinned ? "Unpin" : "Pin",
                              action: onPin)

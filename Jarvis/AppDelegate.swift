@@ -35,7 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Spotlight-style chat window renders regular chat + agent turns in one
     /// conversation. Kept as a computed alias so legacy call sites still
     /// resolve without edits.
-    var agentChatSession: ChatSession { chatSession }
+    /// v1.1.5: agent mode now uses the shared `chatSession` directly.
     private var agentChatPipeline: AgentChatPipeline?
     private var commandRouter: ChatCommandRouter?
     /// Shared buffer for the chat command-bar text field. Lets
@@ -130,7 +130,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Agent chat — lazily instantiated on first ⌥⇧A press so users who
         // never use it don't pay the Anthropic provider init cost.
-        hudController.agentChatSession = agentChatSession
         hudController.onAgentChatSend = { [weak self] text in
             self?.ensureAgentChatPipeline().sendTextMessage(text)
         }
@@ -169,6 +168,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hudController.onOpenSettings = { [weak self] in
             self?.openSettings()
         }
+
+        // v1.1.5: history sidebar wiring. Metadata is re-read every time the
+        // chat panel opens so newly-saved conversations show up without a
+        // restart. Load/delete pipe through to the on-disk store.
+        hudController.onLoadConversation = { [weak self] id in
+            self?.loadConversationIntoChat(id: id)
+        }
+        hudController.onDeleteConversation = { [weak self] id in
+            self?.deleteConversation(id: id)
+        }
+        refreshConversationHistory()
+    }
+
+    private let conversationStore = ConversationStore()
+
+    private func refreshConversationHistory() {
+        hudController.conversationHistory = conversationStore.loadAllMetadata()
+    }
+
+    private func loadConversationIntoChat(id: UUID) {
+        guard let conversation = conversationStore.load(id: id) else { return }
+        chatSession.replaceMessages(conversation.messages)
+        hudController.currentConversationID = id
+    }
+
+    private func deleteConversation(id: UUID) {
+        conversationStore.delete(id: id)
+        if hudController.currentConversationID == id {
+            chatSession.clear()
+            hudController.currentConversationID = nil
+        }
+        refreshConversationHistory()
     }
 
     /// Map a mode to the hotkey that invokes its equivalent direct action,
@@ -250,7 +281,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ?? "claude-sonnet-4-6"
         let pipeline = AgentChatPipeline(
             provider: provider,
-            chatSession: agentChatSession,
+            chatSession: chatSession,
             modelID: modelID
         )
         agentChatPipeline = pipeline
@@ -499,6 +530,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.hudController.saveChatFrame()
                 self.hudController.close()
             } else {
+                self.refreshConversationHistory()
                 self.hudController.showChat()
             }
         }

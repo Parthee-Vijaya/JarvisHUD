@@ -13,7 +13,6 @@ class HUDState {
         case chat
         case uptodate
         case infoMode
-        case agentChat
 
         static func == (lhs: Phase, rhs: Phase) -> Bool {
             switch (lhs, rhs) {
@@ -27,7 +26,6 @@ class HUDState {
             case (.chat, .chat): return true
             case (.uptodate, .uptodate): return true
             case (.infoMode, .infoMode): return true
-            case (.agentChat, .agentChat): return true
             default: return false
             }
         }

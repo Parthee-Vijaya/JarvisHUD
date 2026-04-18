@@ -76,11 +76,12 @@ final class ChatPipeline {
         // Build history from the session, dropping the trailing user message
         // (which is passed separately to the REST call) and any empty placeholders.
         let history = chatSession.currentHistory(excludingLastUser: true)
+        let activeMode = mode ?? self.mode
 
         let result = await geminiClient.sendChatStreaming(
             history: history,
             text: text,
-            mode: mode ?? self.mode,
+            mode: activeMode,
             onDelta: { [weak self] delta in
                 self?.chatSession.appendToAssistant(id: placeholderID, delta: delta)
             }
@@ -90,10 +91,12 @@ final class ChatPipeline {
         case .success(let cleaned):
             chatSession.updateAssistant(id: placeholderID, text: cleaned)
         case .failure(let error):
-            let existing = chatSession.messages.first(where: { $0.id == placeholderID })?.text ?? ""
-            if existing.isEmpty {
-                chatSession.updateAssistant(id: placeholderID, text: "Fejl: \(error.localizedDescription)")
-            }
+            chatSession.markAssistantError(
+                id: placeholderID,
+                errorText: "Fejl: \(error.localizedDescription)",
+                sourceModeID: activeMode.id,
+                sourcePrompt: text
+            )
         }
 
         chatSession.isStreaming = false
