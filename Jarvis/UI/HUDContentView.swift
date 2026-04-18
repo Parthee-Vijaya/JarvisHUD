@@ -186,11 +186,26 @@ struct HUDContentView: View {
             Rectangle()
                 .fill(JarvisTheme.hairline)
                 .frame(height: 1)
-            ScrollView {
+
+            // Rules:
+            // - Short answers flow naturally — HUD grows to fit.
+            // - Long answers (>500 chars) go in a fixed-height scrollview so the
+            //   HUD doesn't balloon past the screen.
+            // The .fixedSize(vertical: true) is key — without it, the text view
+            // reports 0 intrinsic height and collapses to nothing (the "only
+            // header visible" bug reported in α.7).
+            if text.count > 500 {
+                ScrollView {
+                    MarkdownTextView(text, foregroundColor: JarvisTheme.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(height: 260)
+            } else {
                 MarkdownTextView(text, foregroundColor: JarvisTheme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxHeight: 240)
         }
     }
 
