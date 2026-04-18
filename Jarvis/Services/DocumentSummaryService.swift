@@ -7,11 +7,13 @@ import Foundation
 final class DocumentSummaryService {
     private let geminiClient: GeminiClient
     private let hudController: HUDWindowController
+    private let errorPresenter: ErrorPresenter
     private let reader = DocumentReader()
 
-    init(geminiClient: GeminiClient, hudController: HUDWindowController) {
+    init(geminiClient: GeminiClient, hudController: HUDWindowController, errorPresenter: ErrorPresenter) {
         self.geminiClient = geminiClient
         self.hudController = hudController
+        self.errorPresenter = errorPresenter
     }
 
     /// Run the full flow — called by AppDelegate on ⌥⇧S. The file picker is modal and
@@ -27,7 +29,7 @@ final class DocumentSummaryService {
         do {
             document = try reader.read(url: url)
         } catch {
-            hudController.showError(error.localizedDescription)
+            errorPresenter.surface(error, context: "Summary")
             return
         }
 
@@ -46,7 +48,7 @@ final class DocumentSummaryService {
                 let decorated = decorate(summary: text, for: document)
                 self.hudController.showResult(decorated)
             case .failure(let error):
-                self.hudController.showError("Opsummering fejlede: \(error.localizedDescription)")
+                self.errorPresenter.surface(error, context: "Summary")
             }
         }
     }

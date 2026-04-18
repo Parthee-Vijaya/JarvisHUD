@@ -3,13 +3,14 @@ import AVFoundation
 enum Constants {
     // MARK: - App
     static let appName = "Jarvis"
-    static let appVersion = "5.0.0-alpha.1"
+    static let appVersion = "5.0.0-alpha.2"
     static let bundleID = "pavi.Jarvis"
 
     // MARK: - Keychain
     static let keychainService = "pavi.Jarvis"
     static let keychainAccount = "GeminiAPIKey"
     static let keychainPorcupineAccount = "PorcupineAccessKey"
+    static let keychainAnthropicAccount = "AnthropicAPIKey"
 
     // MARK: - Recording
     static let maxRecordingDuration: TimeInterval = 60

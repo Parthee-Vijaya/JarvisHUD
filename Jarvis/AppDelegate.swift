@@ -33,9 +33,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let locationService = LocationService()
     lazy var updatesService = UpdatesService(locationService: locationService)
     lazy var infoModeService = InfoModeService(locationService: locationService)
+    lazy var errorPresenter = ErrorPresenter(hudController: hudController)
     private lazy var summaryService = DocumentSummaryService(
         geminiClient: geminiClient,
-        hudController: hudController
+        hudController: hudController,
+        errorPresenter: errorPresenter
     )
 
     // Supporting services (owned here, injected into pipeline)

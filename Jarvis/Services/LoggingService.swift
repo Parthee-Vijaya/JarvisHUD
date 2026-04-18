@@ -26,12 +26,18 @@ class LoggingService: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: logDirectoryURL, withIntermediateDirectories: true)
     }
 
+    /// Cap for the primary log file. When exceeded, rotate to .1, .2, .3 and start fresh.
+    private let maxLogSizeBytes: UInt64 = 5 * 1_024 * 1_024  // 5 MB
+    private let keepRotations = 3
+
     func log(_ message: String, level: Level = .info) {
         queue.async { [weak self] in
             guard let self else { return }
             let timestamp = self.dateFormatter.string(from: Date())
             let logLine = "[\(timestamp)] [\(level.rawValue)] \(message)\n"
             let logFileURL = self.logDirectoryURL.appendingPathComponent("jarvis.log")
+
+            self.rotateIfNeeded(logFileURL)
 
             if FileManager.default.fileExists(atPath: logFileURL.path) {
                 if let handle = try? FileHandle(forWritingTo: logFileURL) {
@@ -49,5 +55,28 @@ class LoggingService: @unchecked Sendable {
             print(logLine, terminator: "")
             #endif
         }
+    }
+
+    /// Move `jarvis.log` → `.1`, `.1` → `.2`, `.2` → `.3`, drop `.3` if it exists.
+    /// Cheap-to-run: the stat call is fast, and rotation is only triggered when
+    /// the file actually exceeds the cap.
+    private func rotateIfNeeded(_ url: URL) {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? UInt64,
+              size >= maxLogSizeBytes else { return }
+
+        // Delete oldest, shift everything up by one.
+        let deepestURL = url.appendingPathExtension("\(keepRotations)")
+        try? fm.removeItem(at: deepestURL)
+        for i in stride(from: keepRotations - 1, through: 1, by: -1) {
+            let from = url.appendingPathExtension("\(i)")
+            let to = url.appendingPathExtension("\(i + 1)")
+            if fm.fileExists(atPath: from.path) {
+                try? fm.moveItem(at: from, to: to)
+            }
+        }
+        let firstRotated = url.appendingPathExtension("1")
+        try? fm.moveItem(at: url, to: firstRotated)
     }
 }

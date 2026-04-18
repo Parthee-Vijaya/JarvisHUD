@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		AA200001300000000000AAAA /* Jarvis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jarvis.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA200101300000000000AAAA /* JarvisTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JarvisTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +17,22 @@
 			path = Jarvis;
 			sourceTree = "<group>";
 		};
+		AA200102300000000000AAAA /* JarvisTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = JarvisTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AA200003300000000000AAAA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA200105300000000000AAAA /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +46,7 @@
 			isa = PBXGroup;
 			children = (
 				AA200002300000000000AAAA /* Jarvis */,
+				AA200102300000000000AAAA /* JarvisTests */,
 				AA200005300000000000AAAA /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				AA200001300000000000AAAA /* Jarvis.app */,
+				AA200101300000000000AAAA /* JarvisTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -71,6 +86,29 @@
 			productReference = AA200001300000000000AAAA /* Jarvis.app */;
 			productType = "com.apple.product-type.application";
 		};
+		AA200103300000000000AAAA /* JarvisTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA20010B300000000000AAAA /* Build configuration list for PBXNativeTarget "JarvisTests" */;
+			buildPhases = (
+				AA200104300000000000AAAA /* Sources */,
+				AA200105300000000000AAAA /* Frameworks */,
+				AA200106300000000000AAAA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA200108300000000000AAAA /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA200102300000000000AAAA /* JarvisTests */,
+			);
+			name = JarvisTests;
+			packageProductDependencies = (
+			);
+			productName = JarvisTests;
+			productReference = AA200101300000000000AAAA /* JarvisTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -83,6 +121,10 @@
 				TargetAttributes = {
 					AA200006300000000000AAAA = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					AA200103300000000000AAAA = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = AA200006300000000000AAAA;
 					};
 				};
 			};
@@ -104,12 +146,20 @@
 			projectRoot = "";
 			targets = (
 				AA200006300000000000AAAA /* Jarvis */,
+				AA200103300000000000AAAA /* JarvisTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		AA200008300000000000AAAA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA200106300000000000AAAA /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -126,7 +176,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA200104300000000000AAAA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		AA200107300000000000AAAA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA200009300000000000AAAA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA200006300000000000AAAA;
+			remoteInfo = Jarvis;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		AA200108300000000000AAAA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA200006300000000000AAAA /* Jarvis */;
+			targetProxy = AA200107300000000000AAAA /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AA20000B300000000000AAAA /* Debug */ = {
@@ -313,6 +388,44 @@
 			};
 			name = Release;
 		};
+		AA200109300000000000AAAA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HWXJKHR66N;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pavi.JarvisTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Jarvis.app/Contents/MacOS/Jarvis";
+			};
+			name = Debug;
+		};
+		AA20010A300000000000AAAA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HWXJKHR66N;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pavi.JarvisTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Jarvis.app/Contents/MacOS/Jarvis";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -330,6 +443,15 @@
 			buildConfigurations = (
 				AA20000D300000000000AAAA /* Debug */,
 				AA20000E300000000000AAAA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA20010B300000000000AAAA /* Build configuration list for PBXNativeTarget "JarvisTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA200109300000000000AAAA /* Debug */,
+				AA20010A300000000000AAAA /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

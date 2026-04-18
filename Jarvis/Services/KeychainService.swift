@@ -122,4 +122,52 @@ class KeychainService: @unchecked Sendable {
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
+
+    // MARK: - Anthropic API Key
+
+    private var cachedAnthropicKey: String?
+
+    func saveAnthropicKey(_ key: String) -> Bool {
+        guard let data = key.data(using: .utf8) else { return false }
+        _ = deleteAnthropicKey()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: Constants.keychainAnthropicAccount,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
+        ]
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecSuccess { cachedAnthropicKey = key }
+        return status == errSecSuccess
+    }
+
+    func getAnthropicKey() -> String? {
+        if let cachedAnthropicKey { return cachedAnthropicKey }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: Constants.keychainAnthropicAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        let key = String(data: data, encoding: .utf8)
+        cachedAnthropicKey = key
+        return key
+    }
+
+    @discardableResult
+    func deleteAnthropicKey() -> Bool {
+        cachedAnthropicKey = nil
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: Constants.keychainAnthropicAccount
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
 }

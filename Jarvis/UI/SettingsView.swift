@@ -14,6 +14,8 @@ struct SettingsView: View {
     @Binding var selectedTab: SettingsTab
 
     @State private var apiKey = ""
+    @State private var anthropicKey = ""
+    @State private var anthropicStatus: String?
     @State private var connectionStatus: ConnectionStatus = .unknown
     @State private var isTesting = false
     @State private var showingNewMode = false
@@ -83,6 +85,9 @@ struct SettingsView: View {
             if let existing = keychainService.getPorcupineKey() {
                 porcupineKey = existing
             }
+            if let existing = keychainService.getAnthropicKey() {
+                anthropicKey = existing
+            }
             if let locationService = (NSApp.delegate as? AppDelegate)?.locationService {
                 homeAddress = locationService.homeAddress ?? ""
                 manualCity = locationService.manualCity ?? ""
@@ -92,31 +97,57 @@ struct SettingsView: View {
 
     private var apiKeyTab: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Gemini API Key").font(.headline)
-            Text("Get your API key from aistudio.google.com")
-                .font(.caption).foregroundStyle(.secondary)
-
-            HStack {
-                SecureField("Enter API key...", text: $apiKey)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save") {
-                    keychainService.clearCache()
-                    if keychainService.saveAPIKey(apiKey) {
-                        LoggingService.shared.log("API key saved to Keychain (cache invalidated)")
-                        connectionStatus = .unknown
-                        // Drop the cached SDK Chat so the next chat message uses the new key.
-                        (NSApp.delegate as? AppDelegate)?.resetChatPipelineForKeyRotation()
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Gemini API Key").fontWeight(.medium)
+                    Text("Bruges af voice-moderne, Uptodate, Summarize, Chat. Hent fra aistudio.google.com.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        SecureField("sk-...", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Gem") {
+                            keychainService.clearCache()
+                            if keychainService.saveAPIKey(apiKey) {
+                                LoggingService.shared.log("Gemini API key saved to Keychain")
+                                connectionStatus = .unknown
+                                (NSApp.delegate as? AppDelegate)?.resetChatPipelineForKeyRotation()
+                            }
+                        }
+                        .disabled(apiKey.isEmpty)
+                    }
+                    HStack {
+                        Button("Test Connection") { testConnection() }
+                            .disabled(apiKey.isEmpty || isTesting)
+                        if isTesting { ProgressView().controlSize(.small) }
+                        Text(connectionStatus.label)
+                            .foregroundStyle(connectionStatus.color).font(.caption)
                     }
                 }
-                .disabled(apiKey.isEmpty)
             }
 
-            HStack {
-                Button("Test Connection") { testConnection() }
-                    .disabled(apiKey.isEmpty || isTesting)
-                if isTesting { ProgressView().controlSize(.small) }
-                Text(connectionStatus.label)
-                    .foregroundStyle(connectionStatus.color).font(.caption)
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Anthropic API Key").fontWeight(.medium)
+                    Text("Bruges af Agent-mode (kommer i v5 beta) til Claude Sonnet/Opus tool-use. Hent fra console.anthropic.com.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        SecureField("sk-ant-...", text: $anthropicKey)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Gem") {
+                            keychainService.clearCache()
+                            if keychainService.saveAnthropicKey(anthropicKey) {
+                                LoggingService.shared.log("Anthropic API key saved to Keychain")
+                                anthropicStatus = "Gemt."
+                            } else {
+                                anthropicStatus = "Kunne ikke gemme nøglen."
+                            }
+                        }
+                        .disabled(anthropicKey.isEmpty)
+                    }
+                    if let status = anthropicStatus {
+                        Text(status).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             Spacer()
         }
