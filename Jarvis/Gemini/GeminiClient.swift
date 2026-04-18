@@ -177,36 +177,43 @@ final class GeminiClient {
     }
 
     private func sendTextWithSearch(prompt: String, imageData: Data?, mode: Mode) async throws -> String {
-        // 1) Pre-fetch real web results via DuckDuckGo. Gemini's own `googleSearch`
-        //    tool fires inconsistently — sometimes the model "knows" a stale answer
-        //    and skips the tool. Doing our own DDG call FIRST guarantees fresh
-        //    context in the prompt; we keep `googleSearch` enabled too as a
-        //    cross-reference.
-        let searchResults = await WebSearchService.shared.search(query: prompt, limit: 4)
-        var augmentedPrompt = prompt
-        if !searchResults.isEmpty {
-            let today = Self.todayDateString()
-            let context = searchResults
-                .map { $0.promptLine }
-                .joined(separator: "\n")
+        // Always gather fresh sources FIRST. The strict system prompt tells the
+        // model "answer only from these sources"; we keep googleSearch enabled
+        // as a second-layer safety net for queries our fixed sources miss.
+        let searchResults = await WebSearchService.shared.search(query: prompt, limit: 5)
+
+        let today = Self.todayDateString()
+        let augmentedPrompt: String
+        if searchResults.isEmpty {
+            // No external sources found. The model's system prompt knows to say
+            // "Jeg kan ikke finde et klart svar …" in this case.
             augmentedPrompt = """
             Dato: \(today)
-            Web-søgeresultater fra DuckDuckGo:
-            \(context)
+            INGEN web-søgeresultater tilgængelige.
 
-            Brugerens spørgsmål: \(prompt)
-
-            Brug søgeresultaterne som primær kilde. Hvis de ikke dækker spørgsmålet, \
-            brug google_search-værktøjet til at søge videre. Svar kortfattet på samme sprog \
-            som spørgsmålet. Angiv gerne 1-2 kilder i parentes.
+            Spørgsmål: \(prompt)
             """
-            LoggingService.shared.log("WebSearch: \(searchResults.count) DDG results prepended")
+            LoggingService.shared.log("WebSearch: 0 pre-fetch results — model will refuse without grounding", level: .warning)
         } else {
-            LoggingService.shared.log("WebSearch: DDG returned 0 results — relying on googleSearch tool", level: .warning)
+            let numbered = searchResults.enumerated()
+                .map { (index, result) in result.promptBlock(index: index + 1) }
+                .joined(separator: "\n\n")
+            augmentedPrompt = """
+            Dato: \(today)
+            Verificerbare kilder (brug KUN disse til faktuelle udsagn):
+
+            \(numbered)
+
+            Spørgsmål: \(prompt)
+
+            Svar i det påkrævede format med [n]-henvisninger og en **Kilder**-sektion.
+            """
+            LoggingService.shared.log("WebSearch: \(searchResults.count) pre-fetch results numbered for model")
         }
 
         var parts: [GeminiPart] = [.text(augmentedPrompt)]
         if let imageData { parts.append(.data(mime: "image/png", imageData)) }
+
         let request = GeminiRequest(
             systemInstruction: GeminiContent(role: "system", parts: [.text(mode.systemPrompt)]),
             contents: [GeminiContent(role: "user", parts: parts)],
@@ -214,13 +221,76 @@ final class GeminiClient {
             generationConfig: GeminiGenerationConfig(maxOutputTokens: mode.maxTokens)
         )
 
-        LoggingService.shared.log("Gemini REST+search POST: model=\(modelName(for: mode)), promptChars=\(augmentedPrompt.count), image=\(imageData != nil)")
+        LoggingService.shared.log("Gemini POST: model=\(modelName(for: mode)), chars=\(augmentedPrompt.count), preSources=\(searchResults.count), image=\(imageData != nil)")
         let response = try await rest.generate(model: modelName(for: mode), request: request, mode: mode)
         guard let text = response.text else { throw GeminiRESTError.emptyResponse }
+
+        // Combine pre-fetched sources with anything Gemini's googleSearch tool
+        // produced, deduplicated. This gives the Kilder section full coverage.
+        let geminiSources = Self.sourcesFromGrounding(response: response)
+        let combinedSources = Self.dedupSources(searchResults + geminiSources)
         if !response.groundingSources.isEmpty {
             LoggingService.shared.log("Gemini grounded on: \(response.groundingSources.prefix(5).joined(separator: ", "))")
         }
-        return postProcess(text)
+
+        let finalText = Self.ensureSourcesFooter(rawAnswer: postProcess(text), sources: combinedSources)
+        return finalText
+    }
+
+    // MARK: - Source-footer helpers
+
+    /// Extract extra sources from Gemini's groundingMetadata chunks (when the
+    /// model actually used googleSearch). Maps each `web` chunk to a SearchResult.
+    private static func sourcesFromGrounding(response: GeminiResponse) -> [SearchResult] {
+        guard let chunks = response.candidates?.first?.groundingMetadata?.groundingChunks else {
+            return []
+        }
+        return chunks.compactMap { chunk -> SearchResult? in
+            guard let web = chunk.web else { return nil }
+            let title = web.title ?? (URL(string: web.uri ?? "")?.host ?? "Kilde")
+            return SearchResult(title: title, snippet: "", url: web.uri ?? "")
+        }
+    }
+
+    /// Dedup by URL host+path, preserving order.
+    private static func dedupSources(_ items: [SearchResult]) -> [SearchResult] {
+        var seen = Set<String>()
+        var output: [SearchResult] = []
+        for item in items where !item.url.isEmpty {
+            let key = URL(string: item.url)?.absoluteString ?? item.url
+            if seen.insert(key).inserted {
+                output.append(item)
+            }
+        }
+        return output
+    }
+
+    /// If the model obeyed the system prompt it already appended a Kilder section.
+    /// This guarantees it's there even if the model slipped — and upgrades the
+    /// section with any extra sources Gemini found via googleSearch tool.
+    private static func ensureSourcesFooter(rawAnswer: String, sources: [SearchResult]) -> String {
+        guard !sources.isEmpty else { return rawAnswer }
+
+        // Strip any existing "Kilder" section so we can rebuild with merged list.
+        let stripped: String
+        if let range = rawAnswer.range(of: "\\*\\*Kilder\\*\\*|^Kilder$|^##\\s*Kilder",
+                                        options: [.regularExpression, .anchored],
+                                        range: rawAnswer.startIndex..<rawAnswer.endIndex) {
+            // Shouldn't happen normally — the regex above is anchored weirdly so bail.
+            stripped = String(rawAnswer[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let kilderRange = rawAnswer.range(of: "\n**Kilder**", options: .literal)
+                    ?? rawAnswer.range(of: "\n## Kilder", options: .literal)
+                    ?? rawAnswer.range(of: "\nKilder:", options: .literal) {
+            stripped = String(rawAnswer[..<kilderRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            stripped = rawAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let footer = sources.enumerated()
+            .map { (index, src) in "\(index + 1). [\(src.title)](\(src.url))" }
+            .joined(separator: "\n")
+
+        return "\(stripped)\n\n**Kilder**\n\(footer)"
     }
 
     private static func todayDateString() -> String {
