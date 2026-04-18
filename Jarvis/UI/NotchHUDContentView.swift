@@ -24,6 +24,10 @@ struct NotchHUDContentView: View {
         HStack(spacing: 0) {
             visualColumn
                 .frame(width: Constants.NotchHUD.visualColumnWidth)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.9, anchor: .center).combined(with: .opacity),
+                    removal: .opacity
+                ))
 
             Rectangle()
                 .fill(JarvisTheme.neonCyan.opacity(0.18))
@@ -32,6 +36,10 @@ struct NotchHUDContentView: View {
 
             contentColumn
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .opacity
+                ))
         }
         .padding(.horizontal, 14)
         .padding(.top, 10)
@@ -46,9 +54,12 @@ struct NotchHUDContentView: View {
         .shadow(color: JarvisTheme.neonCyan.opacity(0.25), radius: 18, y: 6)
         .shadow(color: .black.opacity(0.55), radius: 24, y: 10)
         .opacity(appeared ? 1 : 0)
-        .scaleEffect(y: appeared ? 1 : 0.82, anchor: .top)
+        .scaleEffect(y: appeared ? 1 : 0.78, anchor: .top)
+        // Smoother spring that feels like the actual Dynamic Island — less bounce,
+        // slightly longer settle time so content doesn't jerk on appearance.
+        .animation(.spring(response: 0.45, dampingFraction: 0.82, blendDuration: 0), value: state.currentPhase)
         .onAppear {
-            withAnimation(.spring(duration: 0.4, bounce: 0.3)) {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) {
                 appeared = true
             }
         }

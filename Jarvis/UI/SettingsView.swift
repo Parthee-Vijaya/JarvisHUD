@@ -1,9 +1,41 @@
 import SwiftUI
 
-/// Which Settings tab is frontmost. Exposed so `AppDelegate` can deep-link from
-/// the menu bar "Hotkeys…" item straight to the Hotkeys tab.
-enum SettingsTab: Hashable {
-    case apiKey, modes, hotkeys, history, usage, general
+/// Sidebar items for the Settings window. Exposed so `AppDelegate` can deep-link
+/// into a specific pane via menu-bar items.
+enum SettingsTab: Hashable, CaseIterable, Identifiable {
+    case apiKey, hud, modes, hotkeys, location, voice, claude, history, usage, about
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .apiKey:   return "API-nøgler"
+        case .hud:      return "HUD"
+        case .modes:    return "Modes"
+        case .hotkeys:  return "Hotkeys"
+        case .location: return "Lokation"
+        case .voice:    return "Stemme"
+        case .claude:   return "Claude Code"
+        case .history:  return "Samtaler"
+        case .usage:    return "Forbrug"
+        case .about:    return "Om"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .apiKey:   return "key.horizontal.fill"
+        case .hud:      return "rectangle.on.rectangle"
+        case .modes:    return "list.bullet.rectangle"
+        case .hotkeys:  return "command.square"
+        case .location: return "location.fill"
+        case .voice:    return "mic.and.signal.meter.fill"
+        case .claude:   return "sparkles"
+        case .history:  return "clock.arrow.circlepath"
+        case .usage:    return "chart.bar.fill"
+        case .about:    return "info.circle"
+        }
+    }
 }
 
 struct SettingsView: View {
@@ -13,24 +45,154 @@ struct SettingsView: View {
 
     @Binding var selectedTab: SettingsTab
 
+    var body: some View {
+        NavigationSplitView {
+            List(SettingsTab.allCases, selection: Binding(
+                get: { selectedTab },
+                set: { if let newValue = $0 { selectedTab = newValue } }
+            )) { tab in
+                Label(tab.title, systemImage: tab.systemImage)
+                    .tag(tab)
+            }
+            .navigationSplitViewColumnWidth(min: 180, ideal: Constants.SettingsWindow.sidebarWidth, max: 240)
+        } detail: {
+            detailPane
+        }
+        .navigationTitle("Jarvis Settings")
+        .frame(
+            minWidth: Constants.SettingsWindow.minWidth,
+            idealWidth: Constants.SettingsWindow.defaultWidth,
+            minHeight: Constants.SettingsWindow.minHeight,
+            idealHeight: Constants.SettingsWindow.defaultHeight
+        )
+    }
+
+    @ViewBuilder
+    private var detailPane: some View {
+        switch selectedTab {
+        case .apiKey:
+            SettingsAPIKeysPane(goToTab: goToTab)
+        case .hud:
+            SettingsHUDPane()
+        case .modes:
+            SettingsModesPane()
+        case .hotkeys:
+            SettingsHotkeysPane()
+        case .location:
+            SettingsLocationPane()
+        case .voice:
+            SettingsVoicePane()
+        case .claude:
+            SettingsClaudePane()
+        case .history:
+            SettingsHistoryPane()
+        case .usage:
+            SettingsUsagePane()
+        case .about:
+            SettingsAboutPane()
+        }
+    }
+
+    private func goToTab(_ tab: SettingsTab) {
+        selectedTab = tab
+    }
+}
+
+// MARK: - Shared scrolling scaffold used by every pane
+
+/// Every settings pane wraps its content in this scaffold so scroll behaviour,
+/// padding, and typography are consistent.
+struct SettingsPane<Content: View>: View {
+    let title: String
+    let subtitle: String?
+    @ViewBuilder let content: () -> Content
+
+    init(title: String, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Constants.Spacing.lg) {
+                VStack(alignment: .leading, spacing: Constants.Spacing.xxs) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.bottom, Constants.Spacing.sm)
+
+                content()
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Constants.Spacing.xxl)
+            .padding(.vertical, Constants.Spacing.xl)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Card-style grouping for a settings subsection. Mimics the SwiftUI-on-iOS
+/// grouped-form look, adapted for macOS windows.
+struct SettingsCard<Content: View>: View {
+    let title: String?
+    let footer: String?
+    @ViewBuilder let content: () -> Content
+
+    init(title: String? = nil, footer: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.footer = footer
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Constants.Spacing.xs) {
+            if let title {
+                Text(title)
+                    .font(.headline)
+                    .padding(.leading, Constants.Spacing.xs)
+            }
+            VStack(alignment: .leading, spacing: Constants.Spacing.md) {
+                content()
+            }
+            .padding(Constants.Spacing.lg)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.18), lineWidth: 0.5)
+                    )
+            }
+            if let footer {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, Constants.Spacing.xs)
+                    .padding(.top, Constants.Spacing.xxs)
+            }
+        }
+    }
+}
+
+// MARK: - API Keys pane
+
+struct SettingsAPIKeysPane: View {
+    let goToTab: (SettingsTab) -> Void
+    @Environment(UsageTracker.self) private var usageTracker
+
     @State private var apiKey = ""
     @State private var anthropicKey = ""
-    @State private var anthropicStatus: String?
     @State private var connectionStatus: ConnectionStatus = .unknown
+    @State private var anthropicStatus: String?
     @State private var isTesting = false
-    @State private var showingNewMode = false
-    @AppStorage("ttsEnabled") private var ttsEnabled = false
-    @AppStorage(Constants.Defaults.wakeWordEnabled) private var wakeWordEnabled = false
-    @AppStorage(Constants.Defaults.hudStyle) private var hudStyleRaw: String = HUDStylePreference.auto.rawValue
-    @AppStorage(Constants.Defaults.claudeDailyLimitTokens)
-    private var claudeDailyLimit: Int = Constants.ClaudeStats.defaultDailyLimit
-    @AppStorage(Constants.Defaults.claudeWeeklyLimitTokens)
-    private var claudeWeeklyLimit: Int = Constants.ClaudeStats.defaultWeeklyLimit
-    @State private var porcupineKey = ""
-    @State private var wakeWordStatus: String?
-    @State private var homeAddress: String = ""
-    @State private var manualCity: String = ""
-
     private let keychainService = KeychainService()
 
     enum ConnectionStatus {
@@ -39,8 +201,8 @@ struct SettingsView: View {
         var label: String {
             switch self {
             case .unknown: return ""
-            case .connected: return "Connected"
-            case .failed(let msg): return "Failed: \(msg)"
+            case .connected: return "Forbundet"
+            case .failed(let msg): return "Fejl: \(msg)"
             }
         }
 
@@ -53,459 +215,75 @@ struct SettingsView: View {
         }
     }
 
-    @State private var conversations: [Conversation] = []
-    private let conversationStore = ConversationStore()
-
     var body: some View {
-        TabView(selection: $selectedTab) {
-            apiKeyTab
-                .tabItem { Label("API Key", systemImage: "key") }
-                .tag(SettingsTab.apiKey)
-            modesTab
-                .tabItem { Label("Modes", systemImage: "list.bullet") }
-                .tag(SettingsTab.modes)
-            hotkeysTab
-                .tabItem { Label("Hotkeys", systemImage: "command") }
-                .tag(SettingsTab.hotkeys)
-            historyTab
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-                .tag(SettingsTab.history)
-            usageTab
-                .tabItem { Label("Usage", systemImage: "chart.bar") }
-                .tag(SettingsTab.usage)
-            generalTab
-                .tabItem { Label("General", systemImage: "gear") }
-                .tag(SettingsTab.general)
-        }
-        .frame(width: 520, height: 500)
-        .onAppear {
-            if let existing = keychainService.getAPIKey() {
-                apiKey = existing
-            }
-            if let existing = keychainService.getPorcupineKey() {
-                porcupineKey = existing
-            }
-            if let existing = keychainService.getAnthropicKey() {
-                anthropicKey = existing
-            }
-            if let locationService = (NSApp.delegate as? AppDelegate)?.locationService {
-                homeAddress = locationService.homeAddress ?? ""
-                manualCity = locationService.manualCity ?? ""
-            }
-        }
-    }
-
-    private var apiKeyTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Gemini API Key").fontWeight(.medium)
-                    Text("Bruges af voice-moderne, Uptodate, Summarize, Chat. Hent fra aistudio.google.com.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        SecureField("sk-...", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Gem") {
-                            keychainService.clearCache()
-                            if keychainService.saveAPIKey(apiKey) {
-                                LoggingService.shared.log("Gemini API key saved to Keychain")
-                                connectionStatus = .unknown
-                                (NSApp.delegate as? AppDelegate)?.resetChatPipelineForKeyRotation()
-                            }
+        SettingsPane(
+            title: "API-nøgler",
+            subtitle: "Jarvis bruger Google Gemini til voice og Uptodate, og Anthropic Claude til Agent-mode (kommer i β)."
+        ) {
+            SettingsCard(
+                title: "Google Gemini",
+                footer: "Hent din nøgle på aistudio.google.com"
+            ) {
+                LabeledContent("API-nøgle") {
+                    SecureField("AIza…", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack(spacing: Constants.Spacing.sm) {
+                    Button("Gem") {
+                        keychainService.clearCache()
+                        if keychainService.saveAPIKey(apiKey) {
+                            LoggingService.shared.log("Gemini API key saved")
+                            connectionStatus = .unknown
+                            (NSApp.delegate as? AppDelegate)?.resetChatPipelineForKeyRotation()
                         }
-                        .disabled(apiKey.isEmpty)
                     }
-                    HStack {
-                        Button("Test Connection") { testConnection() }
-                            .disabled(apiKey.isEmpty || isTesting)
-                        if isTesting { ProgressView().controlSize(.small) }
-                        Text(connectionStatus.label)
-                            .foregroundStyle(connectionStatus.color).font(.caption)
+                    .disabled(apiKey.isEmpty)
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Test forbindelse") { testConnection() }
+                        .disabled(apiKey.isEmpty || isTesting)
+
+                    if isTesting {
+                        ProgressView().controlSize(.small)
                     }
+                    Text(connectionStatus.label)
+                        .foregroundStyle(connectionStatus.color)
+                        .font(.caption)
+                    Spacer()
                 }
             }
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Anthropic API Key").fontWeight(.medium)
-                    Text("Bruges af Agent-mode (kommer i v5 beta) til Claude Sonnet/Opus tool-use. Hent fra console.anthropic.com.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        SecureField("sk-ant-...", text: $anthropicKey)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Gem") {
-                            keychainService.clearCache()
-                            if keychainService.saveAnthropicKey(anthropicKey) {
-                                LoggingService.shared.log("Anthropic API key saved to Keychain")
-                                anthropicStatus = "Gemt."
-                            } else {
-                                anthropicStatus = "Kunne ikke gemme nøglen."
-                            }
+            SettingsCard(
+                title: "Anthropic Claude",
+                footer: "Hent din nøgle på console.anthropic.com — bruges af Agent-mode i β"
+            ) {
+                LabeledContent("API-nøgle") {
+                    SecureField("sk-ant-…", text: $anthropicKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack(spacing: Constants.Spacing.sm) {
+                    Button("Gem") {
+                        keychainService.clearCache()
+                        if keychainService.saveAnthropicKey(anthropicKey) {
+                            LoggingService.shared.log("Anthropic API key saved")
+                            anthropicStatus = "Gemt"
+                        } else {
+                            anthropicStatus = "Kunne ikke gemme nøglen"
                         }
-                        .disabled(anthropicKey.isEmpty)
                     }
+                    .disabled(anthropicKey.isEmpty)
+                    .buttonStyle(.borderedProminent)
+
                     if let status = anthropicStatus {
                         Text(status).font(.caption).foregroundStyle(.secondary)
                     }
-                }
-            }
-            Spacer()
-        }
-        .padding()
-    }
-
-    private var modesTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Modes").font(.headline)
-            List {
-                Section("Built-in") {
-                    ForEach(BuiltInModes.all) { mode in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(mode.name).fontWeight(.medium)
-                                Text(mode.model.displayName)
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Text(mode.outputType.displayName)
-                                .font(.caption)
-                                .padding(.horizontal, 8).padding(.vertical, 2)
-                                .background(.quaternary).clipShape(Capsule())
-                        }
-                    }
-                }
-                Section("Custom") {
-                    ForEach(modeManager.customModes) { mode in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(mode.name).fontWeight(.medium)
-                                Text(mode.model.displayName)
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button(role: .destructive) {
-                                modeManager.deleteCustomMode(id: mode.id)
-                            } label: {
-                                Image(systemName: "trash")
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                    }
-                    if modeManager.customModes.isEmpty {
-                        Text("No custom modes yet").foregroundStyle(.secondary)
-                    }
-                }
-            }
-            Button("New Custom Mode...") { showingNewMode = true }
-                .sheet(isPresented: $showingNewMode) {
-                    NewModeView(modeManager: modeManager, isPresented: $showingNewMode)
-                }
-        }
-        .padding()
-    }
-
-    private var usageTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Usage This Month").font(.headline)
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Total Cost:")
-                        Spacer()
-                        Text("$\(String(format: "%.4f", usageTracker.currentUsage.totalCostUSD))")
-                            .fontWeight(.bold).monospacedDigit()
-                    }
-                    Divider()
-                    UsageRow(label: "Flash Input", tokens: usageTracker.currentUsage.flashInputTokens)
-                    UsageRow(label: "Flash Output", tokens: usageTracker.currentUsage.flashOutputTokens)
-                    UsageRow(label: "Pro Input", tokens: usageTracker.currentUsage.proInputTokens)
-                    UsageRow(label: "Pro Output", tokens: usageTracker.currentUsage.proOutputTokens)
-                }
-                .padding(4)
-            }
-            Spacer()
-        }
-        .padding()
-    }
-
-    private var historyTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Conversation History").font(.headline)
-                Spacer()
-                if !conversations.isEmpty {
-                    Button("Slet alle", role: .destructive) {
-                        conversationStore.deleteAll()
-                        conversations = []
-                    }
-                    .controlSize(.small)
-                }
-            }
-            if conversations.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.largeTitle)
-                        .foregroundStyle(.tertiary)
-                    Text("Ingen samtaler endnu")
-                        .foregroundStyle(.secondary)
-                    Text("Brug ⌥C for at starte en chat")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
                     Spacer()
                 }
-                .frame(maxWidth: .infinity)
-            } else {
-                List {
-                    ForEach(conversations) { convo in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(convo.displayTitle)
-                                .fontWeight(.medium)
-                                .lineLimit(1)
-                            HStack {
-                                Text("\(convo.messages.count) beskeder")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(convo.updatedAt, style: .relative)
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                        .contextMenu {
-                            Button("Slet", role: .destructive) {
-                                conversationStore.delete(id: convo.id)
-                                conversations.removeAll { $0.id == convo.id }
-                            }
-                        }
-                    }
-                }
             }
         }
-        .padding()
         .onAppear {
-            conversations = conversationStore.loadAll()
-        }
-    }
-
-    private var generalTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("General").font(.headline)
-            GroupBox {
-                Toggle("Text-to-Speech for HUD responses", isOn: $ttsEnabled)
-                Text("When enabled, Q&A and Vision responses will be read aloud.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            hudStyleSection
-            claudeLimitsSection
-            locationSection
-            GroupBox {
-                HStack {
-                    Image(systemName: "command").foregroundStyle(.secondary)
-                    Text("Tilpas hotkeys i **Hotkeys**-fanen.").font(.callout)
-                    Spacer()
-                    Button("Gå til Hotkeys") { selectedTab = .hotkeys }
-                        .controlSize(.small)
-                }
-            }
-            wakeWordSection
-            Spacer()
-        }
-        .padding()
-    }
-
-    private var claudeLimitsSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Claude Code budget").fontWeight(.medium)
-                HStack {
-                    Text("Daily").frame(width: 70, alignment: .leading).foregroundStyle(.secondary)
-                    tokenStepper(value: $claudeDailyLimit, step: 250_000)
-                }
-                HStack {
-                    Text("Ugentlig").frame(width: 70, alignment: .leading).foregroundStyle(.secondary)
-                    tokenStepper(value: $claudeWeeklyLimit, step: 1_000_000)
-                }
-                Text("Bruges af Info mode (⌥I) til at vise en progress-bar for dine Claude Code tokens. Sæt dem så de matcher din plan.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func tokenStepper(value: Binding<Int>, step: Int) -> some View {
-        HStack(spacing: 6) {
-            TextField("", value: value, formatter: Self.integerFormatter)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 110)
-            Text("tokens").font(.caption).foregroundStyle(.secondary)
-            Stepper("", value: value, in: 100_000...100_000_000, step: step)
-                .labelsHidden()
-            Spacer()
-            Text(formatTokensShort(value.wrappedValue))
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private static let integerFormatter: NumberFormatter = {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.maximumFractionDigits = 0
-        f.allowsFloats = false
-        return f
-    }()
-
-    private func formatTokensShort(_ n: Int) -> String {
-        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
-        if n >= 1_000 { return String(format: "%dK", n / 1_000) }
-        return String(n)
-    }
-
-    private var locationSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Lokation & hjemadresse").fontWeight(.medium)
-                HStack {
-                    Text("By").frame(width: 70, alignment: .leading).foregroundStyle(.secondary)
-                    TextField("fx København (valgfri — ellers bruges GPS)", text: $manualCity)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Gem") {
-                        (NSApp.delegate as? AppDelegate)?.locationService.manualCity =
-                            manualCity.isEmpty ? nil : manualCity
-                    }
-                    .controlSize(.small)
-                }
-                HStack {
-                    Text("Hjem").frame(width: 70, alignment: .leading).foregroundStyle(.secondary)
-                    TextField("fx Nørregade 12, 1165 København", text: $homeAddress)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Gem") {
-                        (NSApp.delegate as? AppDelegate)?.locationService.homeAddress =
-                            homeAddress.isEmpty ? nil : homeAddress
-                    }
-                    .controlSize(.small)
-                }
-                Text("Hjemadresse bruges af Info mode (⌥I) til at beregne køretid og Tesla-strømforbrug.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var hudStyleSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("HUD-stil").fontWeight(.medium)
-                    Spacer()
-                    Picker("", selection: $hudStyleRaw) {
-                        ForEach(HUDStylePreference.allCases) { style in
-                            Text(style.displayName).tag(style.rawValue)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
-                    .labelsHidden()
-                }
-                Text("**Auto** vælger notch-stil på MacBooks med notch, ellers hjørne øverst til højre. Ændring træder i kraft næste gang HUD åbnes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var wakeWordSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("Aktivér 'Jarvis' wake word", isOn: $wakeWordEnabled)
-                    .onChange(of: wakeWordEnabled) { _, _ in
-                        NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
-                    }
-                Text("Sig \"Jarvis\" for at trigge en Q&A i stedet for at holde hotkeyen. Lyd behandles on-device via Picovoice Porcupine — intet forlader din Mac før wakewordet hører dit navn.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    SecureField("Picovoice AccessKey", text: $porcupineKey)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Gem nøgle") {
-                        keychainService.clearCache()
-                        if keychainService.savePorcupineKey(porcupineKey) {
-                            wakeWordStatus = "Gemt."
-                            NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
-                        } else {
-                            wakeWordStatus = "Kunne ikke gemme nøglen."
-                        }
-                    }
-                    .disabled(porcupineKey.isEmpty)
-                }
-                if let status = wakeWordStatus {
-                    Text(status).font(.caption).foregroundStyle(.secondary)
-                }
-                Link("Få en gratis AccessKey på picovoice.ai/console",
-                     destination: URL(string: "https://picovoice.ai/console/")!)
-                    .font(.caption)
-            }
-        }
-    }
-
-    // MARK: - Hotkeys
-
-    @State private var hotkeyErrorMessage: String?
-    @State private var hotkeyErrorAction: HotkeyAction?
-
-    private var hotkeysTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Hotkeys").font(.headline)
-                Spacer()
-                Button("Nulstil til standard") { hotkeys.resetAll() }
-                    .controlSize(.small)
-            }
-            Text("Klik på en felt og tryk en tastkombination. Tryk ⎋ for at annullere.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            ScrollView {
-                VStack(spacing: 8) {
-                    ForEach(HotkeyAction.allCases) { action in
-                        hotkeyRow(for: action)
-                    }
-                }
-            }
-        }
-        .padding()
-    }
-
-    private func hotkeyRow(for action: HotkeyAction) -> some View {
-        let binding = hotkeys.binding(for: action)
-        return GroupBox {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(action.displayName).fontWeight(.medium)
-                    Text(action.isPushToTalk ? "Hold nede for at optage" : "Tryk én gang")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if hotkeyErrorAction == action, let msg = hotkeyErrorMessage {
-                    Text(msg)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: 180, alignment: .trailing)
-                }
-                HotkeyRecorderView(currentBinding: binding) { keyCode, modifiers in
-                    let result = hotkeys.update(action, keyCode: keyCode, modifiers: modifiers)
-                    switch result {
-                    case .valid:
-                        hotkeyErrorAction = nil
-                        hotkeyErrorMessage = nil
-                    case .invalid(let msg):
-                        hotkeyErrorAction = action
-                        hotkeyErrorMessage = msg
-                    }
-                }
-                .frame(width: 130, height: 26)
-            }
+            if let existing = keychainService.getAPIKey() { apiKey = existing }
+            if let existing = keychainService.getAnthropicKey() { anthropicKey = existing }
         }
     }
 
@@ -524,18 +302,492 @@ struct SettingsView: View {
     }
 }
 
-struct UsageRow: View {
-    let label: String
-    let tokens: Int
+// MARK: - HUD pane
+
+struct SettingsHUDPane: View {
+    @AppStorage("ttsEnabled") private var ttsEnabled = false
+    @AppStorage(Constants.Defaults.hudStyle) private var hudStyleRaw: String = HUDStylePreference.auto.rawValue
+
     var body: some View {
+        SettingsPane(
+            title: "HUD",
+            subtitle: "Udseendet på Jarvis' svar- og optagelsespanel."
+        ) {
+            SettingsCard(
+                title: "Stil",
+                footer: "Auto vælger notch på MacBooks med notch, ellers hjørnestilen øverst til højre."
+            ) {
+                Picker("HUD-stil", selection: $hudStyleRaw) {
+                    ForEach(HUDStylePreference.allCases) { style in
+                        Text(style.displayName).tag(style.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            SettingsCard(title: "Tale") {
+                Toggle("Læs HUD-svar op (Text-to-Speech)", isOn: $ttsEnabled)
+                Text("Når aktiveret læser Jarvis Q&A- og Vision-svar op med systemets stemmesyntese.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+// MARK: - Modes pane
+
+struct SettingsModesPane: View {
+    @Environment(ModeManager.self) private var modeManager
+    @State private var showingNewMode = false
+
+    var body: some View {
+        SettingsPane(title: "Modes", subtitle: "De tilstande Jarvis kan køre i.") {
+            SettingsCard(title: "Indbyggede") {
+                VStack(spacing: 0) {
+                    ForEach(Array(BuiltInModes.all.enumerated()), id: \.element.id) { index, mode in
+                        if index > 0 { Divider() }
+                        modeRow(mode: mode, deletable: false)
+                    }
+                }
+            }
+
+            SettingsCard(
+                title: "Brugerdefinerede",
+                footer: modeManager.customModes.isEmpty
+                    ? "Tryk \"Ny mode\" for at lave din egen med custom prompt og model."
+                    : nil
+            ) {
+                if modeManager.customModes.isEmpty {
+                    HStack {
+                        Image(systemName: "plus.rectangle.on.rectangle").foregroundStyle(.tertiary)
+                        Text("Ingen brugerdefinerede modes endnu")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.vertical, Constants.Spacing.sm)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(modeManager.customModes.enumerated()), id: \.element.id) { index, mode in
+                            if index > 0 { Divider() }
+                            modeRow(mode: mode, deletable: true)
+                        }
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button {
+                        showingNewMode = true
+                    } label: {
+                        Label("Ny mode", systemImage: "plus")
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingNewMode) {
+            NewModeView(modeManager: modeManager, isPresented: $showingNewMode)
+        }
+    }
+
+    private func modeRow(mode: Mode, deletable: Bool) -> some View {
+        HStack(spacing: Constants.Spacing.md) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(mode.name).fontWeight(.medium)
+                Text(mode.model.displayName)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(mode.outputType.displayName)
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, Constants.Spacing.sm)
+                .padding(.vertical, Constants.Spacing.xxs)
+                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                .foregroundStyle(Color.accentColor)
+
+            if deletable {
+                Button(role: .destructive) {
+                    modeManager.deleteCustomMode(id: mode.id)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(.vertical, Constants.Spacing.sm)
+    }
+}
+
+// MARK: - Hotkeys pane
+
+struct SettingsHotkeysPane: View {
+    @Environment(HotkeyBindings.self) private var hotkeys
+    @State private var hotkeyErrorMessage: String?
+    @State private var hotkeyErrorAction: HotkeyAction?
+
+    var body: some View {
+        SettingsPane(
+            title: "Hotkeys",
+            subtitle: "Klik på en tastaturkombination og tryk en ny kombination. Tryk ⎋ for at annullere."
+        ) {
+            SettingsCard {
+                VStack(spacing: 0) {
+                    ForEach(Array(HotkeyAction.allCases.enumerated()), id: \.element) { index, action in
+                        if index > 0 { Divider() }
+                        hotkeyRow(action)
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button(role: .destructive) {
+                    hotkeys.resetAll()
+                } label: {
+                    Label("Nulstil til standard", systemImage: "arrow.counterclockwise")
+                }
+            }
+        }
+    }
+
+    private func hotkeyRow(_ action: HotkeyAction) -> some View {
+        let binding = hotkeys.binding(for: action)
+        return HStack(spacing: Constants.Spacing.md) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.displayName).fontWeight(.medium)
+                Text(action.isPushToTalk ? "Hold nede for at optage" : "Tryk én gang")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if hotkeyErrorAction == action, let msg = hotkeyErrorMessage {
+                Text(msg)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: 180, alignment: .trailing)
+                    .lineLimit(2)
+            }
+            HotkeyRecorderView(currentBinding: binding) { keyCode, modifiers in
+                let result = hotkeys.update(action, keyCode: keyCode, modifiers: modifiers)
+                switch result {
+                case .valid:
+                    hotkeyErrorAction = nil
+                    hotkeyErrorMessage = nil
+                case .invalid(let msg):
+                    hotkeyErrorAction = action
+                    hotkeyErrorMessage = msg
+                }
+            }
+            .frame(width: 140, height: 28)
+        }
+        .padding(.vertical, Constants.Spacing.sm)
+    }
+}
+
+// MARK: - Location pane
+
+struct SettingsLocationPane: View {
+    @State private var homeAddress = ""
+    @State private var manualCity = ""
+
+    var body: some View {
+        SettingsPane(
+            title: "Lokation",
+            subtitle: "Bruges af Uptodate-panelet til vejr, og Info-mode til beregning af køretid hjem."
+        ) {
+            SettingsCard(
+                title: "By",
+                footer: "Hvis denne er tom bruger Jarvis lokationstjenester. Indsæt en by hvis du vil omgå GPS."
+            ) {
+                LabeledContent("Manuel by") {
+                    HStack {
+                        TextField("fx København, Aarhus, …", text: $manualCity)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Gem") {
+                            (NSApp.delegate as? AppDelegate)?.locationService.manualCity =
+                                manualCity.isEmpty ? nil : manualCity
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+
+            SettingsCard(
+                title: "Hjemadresse",
+                footer: "Bruges af Info-mode (⌥I) til at beregne køretid og Tesla-forbrug."
+            ) {
+                LabeledContent("Hjemadresse") {
+                    HStack {
+                        TextField("fx Nørregade 12, 1165 København", text: $homeAddress)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Gem") {
+                            (NSApp.delegate as? AppDelegate)?.locationService.homeAddress =
+                                homeAddress.isEmpty ? nil : homeAddress
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if let locationService = (NSApp.delegate as? AppDelegate)?.locationService {
+                homeAddress = locationService.homeAddress ?? ""
+                manualCity = locationService.manualCity ?? ""
+            }
+        }
+    }
+}
+
+// MARK: - Voice pane (wake word)
+
+struct SettingsVoicePane: View {
+    @AppStorage(Constants.Defaults.wakeWordEnabled) private var wakeWordEnabled = false
+    @State private var porcupineKey = ""
+    @State private var wakeWordStatus: String?
+    private let keychainService = KeychainService()
+
+    var body: some View {
+        SettingsPane(
+            title: "Stemme",
+            subtitle: "Wake word og andre stemme-indstillinger. Mikrofonen på push-to-talk justeres via Systemindstillinger."
+        ) {
+            SettingsCard(
+                title: "Wake word",
+                footer: "Lyden behandles on-device via Picovoice Porcupine. Intet forlader din Mac før wakewordet fyrer."
+            ) {
+                Toggle("Aktivér 'Jarvis' wake word", isOn: $wakeWordEnabled)
+                    .onChange(of: wakeWordEnabled) { _, _ in
+                        NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
+                    }
+
+                LabeledContent("Picovoice AccessKey") {
+                    HStack {
+                        SecureField("paste nøglen her", text: $porcupineKey)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Gem") {
+                            keychainService.clearCache()
+                            if keychainService.savePorcupineKey(porcupineKey) {
+                                wakeWordStatus = "Gemt"
+                                NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
+                            } else {
+                                wakeWordStatus = "Kunne ikke gemme nøglen"
+                            }
+                        }
+                        .disabled(porcupineKey.isEmpty)
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+
+                HStack {
+                    if let status = wakeWordStatus {
+                        Text(status).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Link("Få gratis AccessKey →", destination: URL(string: "https://picovoice.ai/console/")!)
+                        .font(.caption)
+                }
+            }
+        }
+        .onAppear {
+            if let existing = keychainService.getPorcupineKey() { porcupineKey = existing }
+        }
+    }
+}
+
+// MARK: - Claude Code pane
+
+struct SettingsClaudePane: View {
+    @AppStorage(Constants.Defaults.claudeDailyLimitTokens)
+    private var claudeDailyLimit: Int = Constants.ClaudeStats.defaultDailyLimit
+    @AppStorage(Constants.Defaults.claudeWeeklyLimitTokens)
+    private var claudeWeeklyLimit: Int = Constants.ClaudeStats.defaultWeeklyLimit
+
+    var body: some View {
+        SettingsPane(
+            title: "Claude Code",
+            subtitle: "Token-budget som Info-mode (⌥I) bruger til progress-bars. Sæt dem så de matcher din plan."
+        ) {
+            SettingsCard(title: "Budget") {
+                tokenRow(label: "Daily", value: $claudeDailyLimit, step: 250_000)
+                Divider()
+                tokenRow(label: "Ugentlig", value: $claudeWeeklyLimit, step: 1_000_000)
+            }
+        }
+    }
+
+    private func tokenRow(label: String, value: Binding<Int>, step: Int) -> some View {
+        HStack(spacing: Constants.Spacing.md) {
+            Text(label)
+                .frame(width: 80, alignment: .leading)
+                .font(.body.weight(.medium))
+            TextField("", value: value, formatter: Self.integerFormatter)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 140)
+            Text("tokens").font(.callout).foregroundStyle(.secondary)
+            Stepper("", value: value, in: 100_000...100_000_000, step: step)
+                .labelsHidden()
+            Spacer()
+            Text(formatTokensShort(value.wrappedValue))
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 60, alignment: .trailing)
+        }
+    }
+
+    private static let integerFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 0
+        f.allowsFloats = false
+        return f
+    }()
+
+    private func formatTokensShort(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000 { return String(format: "%dK", n / 1_000) }
+        return String(n)
+    }
+}
+
+// MARK: - History pane
+
+struct SettingsHistoryPane: View {
+    @State private var conversations: [Conversation] = []
+    private let conversationStore = ConversationStore()
+
+    var body: some View {
+        SettingsPane(
+            title: "Samtaler",
+            subtitle: conversations.isEmpty ? nil : "Gemte chat-samtaler fra ⌥C."
+        ) {
+            if conversations.isEmpty {
+                SettingsCard {
+                    VStack(spacing: Constants.Spacing.md) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(.system(size: 34))
+                            .foregroundStyle(.tertiary)
+                        Text("Ingen samtaler endnu")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Text("Brug ⌥C for at starte en chat med Jarvis.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Constants.Spacing.xl)
+                }
+            } else {
+                HStack {
+                    Spacer()
+                    Button(role: .destructive) {
+                        conversationStore.deleteAll()
+                        conversations = []
+                    } label: {
+                        Label("Slet alle", systemImage: "trash")
+                    }
+                }
+                SettingsCard {
+                    VStack(spacing: 0) {
+                        ForEach(Array(conversations.enumerated()), id: \.element.id) { index, convo in
+                            if index > 0 { Divider() }
+                            HStack(spacing: Constants.Spacing.md) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(convo.displayTitle).fontWeight(.medium).lineLimit(1)
+                                    Text("\(convo.messages.count) beskeder")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(convo.updatedAt, style: .relative)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, Constants.Spacing.sm)
+                            .contextMenu {
+                                Button("Slet", role: .destructive) {
+                                    conversationStore.delete(id: convo.id)
+                                    conversations.removeAll { $0.id == convo.id }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear {
+            conversations = conversationStore.loadAll()
+        }
+    }
+}
+
+// MARK: - Usage pane
+
+struct SettingsUsagePane: View {
+    @Environment(UsageTracker.self) private var usageTracker
+
+    var body: some View {
+        SettingsPane(
+            title: "Forbrug",
+            subtitle: "Dine Gemini API-omkostninger denne måned."
+        ) {
+            SettingsCard(title: "Denne måned") {
+                HStack {
+                    Text("Total").font(.headline)
+                    Spacer()
+                    Text("$\(String(format: "%.4f", usageTracker.currentUsage.totalCostUSD))")
+                        .font(.title2.weight(.bold).monospacedDigit())
+                }
+                Divider()
+                usageRow("Flash Input",  tokens: usageTracker.currentUsage.flashInputTokens)
+                usageRow("Flash Output", tokens: usageTracker.currentUsage.flashOutputTokens)
+                usageRow("Pro Input",    tokens: usageTracker.currentUsage.proInputTokens)
+                usageRow("Pro Output",   tokens: usageTracker.currentUsage.proOutputTokens)
+            }
+        }
+    }
+
+    private func usageRow(_ label: String, tokens: Int) -> some View {
         HStack {
             Text(label).foregroundStyle(.secondary)
             Spacer()
-            Text("\(tokens) tokens").monospacedDigit()
+            Text("\(tokens.formatted()) tokens").monospacedDigit()
         }
-        .font(.caption)
+        .font(.callout)
     }
 }
+
+// MARK: - About pane
+
+struct SettingsAboutPane: View {
+    var body: some View {
+        SettingsPane(title: "Om Jarvis") {
+            SettingsCard {
+                HStack(alignment: .top, spacing: Constants.Spacing.lg) {
+                    Image(nsImage: NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "waveform.circle.fill", accessibilityDescription: nil)!)
+                        .resizable()
+                        .frame(width: 64, height: 64)
+                    VStack(alignment: .leading, spacing: Constants.Spacing.xs) {
+                        Text("Jarvis").font(.title.weight(.bold))
+                        Text("Version \(Constants.appVersion)")
+                            .foregroundStyle(.secondary)
+                        Text("AI voice assistant for macOS. Gemini + Claude + on-device speech.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                }
+            }
+
+            SettingsCard(title: "Logs") {
+                Button {
+                    NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser
+                        .appendingPathComponent("Library/Logs/Jarvis"))
+                } label: {
+                    Label("Åbn logs-mappen", systemImage: "folder")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - NewModeView (unchanged, but polished)
 
 struct NewModeView: View {
     let modeManager: ModeManager
@@ -546,23 +798,34 @@ struct NewModeView: View {
     @State private var outputType: OutputType = .paste
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("New Custom Mode").font(.headline)
-            TextField("Mode name", text: $name).textFieldStyle(.roundedBorder)
-            Text("System Prompt:").font(.subheadline)
+        VStack(alignment: .leading, spacing: Constants.Spacing.lg) {
+            Text("Ny brugerdefineret mode").font(.title3.weight(.semibold))
+
+            Form {
+                TextField("Navn", text: $name)
+                Picker("Model", selection: $model) {
+                    ForEach(GeminiModel.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                Picker("Output", selection: $outputType) {
+                    ForEach(OutputType.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+            }
+            .formStyle(.grouped)
+
+            Text("Systemprompt")
+                .font(.subheadline.weight(.medium))
             TextEditor(text: $systemPrompt)
-                .font(.body).frame(minHeight: 120)
-                .border(Color.secondary.opacity(0.3))
-            Picker("Model:", selection: $model) {
-                ForEach(GeminiModel.allCases, id: \.self) { m in Text(m.displayName).tag(m) }
-            }
-            Picker("Output:", selection: $outputType) {
-                ForEach(OutputType.allCases, id: \.self) { o in Text(o.displayName).tag(o) }
-            }
+                .font(.body)
+                .frame(minHeight: 140)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                )
+
             HStack {
                 Spacer()
-                Button("Cancel") { isPresented = false }
-                Button("Create") {
+                Button("Annuller") { isPresented = false }
+                Button("Opret") {
                     let mode = Mode(id: UUID(), name: name, systemPrompt: systemPrompt,
                                     model: model, outputType: outputType, maxTokens: 2048, isBuiltIn: false)
                     modeManager.addCustomMode(mode)
@@ -573,20 +836,6 @@ struct NewModeView: View {
             }
         }
         .padding()
-        .frame(width: 450, height: 400)
-    }
-}
-
-struct ShortcutRow: View {
-    let keys: String
-    let description: String
-    var body: some View {
-        HStack {
-            Text(keys)
-                .font(.system(.caption, design: .monospaced))
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(.quaternary).clipShape(RoundedRectangle(cornerRadius: 4))
-            Text(description).font(.caption).foregroundStyle(.secondary)
-        }
+        .frame(width: 520, height: 480)
     }
 }

@@ -44,8 +44,9 @@ struct HUDContentView: View {
         .scaleEffect(appeared ? 1 : Constants.Animation.appearScaleFrom)
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : Constants.Animation.appearOffsetFrom)
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: state.currentPhase)
         .onAppear {
-            withAnimation(.spring(duration: Constants.Animation.appearDuration, bounce: Constants.Animation.appearBounce)) {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) {
                 appeared = true
             }
         }

@@ -164,18 +164,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusMenu.addItem(NSMenuItem.separator())
 
-        let hotkeysItem = NSMenuItem(title: "Hotkeys…", action: #selector(openHotkeysSettings), keyEquivalent: "")
+        // Quick-launch panels
+        let infoItem = NSMenuItem(title: "Info mode", action: #selector(openInfoModeFromMenu), keyEquivalent: "i")
+        infoItem.target = self
+        infoItem.keyEquivalentModifierMask = [.option]
+        statusMenu.addItem(infoItem)
+
+        let uptodateItem = NSMenuItem(title: "Uptodate (vejr + nyheder)", action: #selector(openUptodateFromMenu), keyEquivalent: "u")
+        uptodateItem.target = self
+        uptodateItem.keyEquivalentModifierMask = [.option]
+        statusMenu.addItem(uptodateItem)
+
+        // Hotkey cheat sheet submenu
+        let shortcutsItem = NSMenuItem(title: "Hurtig-genveje", action: nil, keyEquivalent: "")
+        shortcutsItem.submenu = buildShortcutsSubmenu()
+        statusMenu.addItem(shortcutsItem)
+
+        statusMenu.addItem(NSMenuItem.separator())
+
+        let hotkeysItem = NSMenuItem(title: "Tilpas hotkeys…", action: #selector(openHotkeysSettings), keyEquivalent: "")
         hotkeysItem.target = self
         statusMenu.addItem(hotkeysItem)
 
-        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: "Indstillinger…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         statusMenu.addItem(settingsItem)
 
         statusMenu.addItem(NSMenuItem.separator())
-        statusMenu.addItem(NSMenuItem(title: "Quit Jarvis", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        statusMenu.addItem(NSMenuItem(title: "Afslut Jarvis", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem.menu = statusMenu
+    }
+
+    /// Read-only "cheat sheet" of active hotkeys so the user can see them at a
+    /// glance without opening Settings.
+    private func buildShortcutsSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        for action in HotkeyAction.allCases {
+            let binding = hotkeyBindings.binding(for: action)
+            let item = NSMenuItem(
+                title: "\(action.displayName)   \(binding.displayString)",
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.isEnabled = false
+            submenu.addItem(item)
+        }
+        return submenu
     }
 
     private func buildModesSubmenu() -> NSMenu {
@@ -220,6 +255,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         presentSettings(tab: .hotkeys)
     }
 
+    @objc private func openInfoModeFromMenu() {
+        if hudController.isInfoModeVisible {
+            hudController.close()
+        } else {
+            hudController.showInfoMode()
+        }
+    }
+
+    @objc private func openUptodateFromMenu() {
+        if hudController.isUptodateVisible {
+            hudController.close()
+        } else {
+            hudController.showUptodate()
+        }
+    }
+
     private func presentSettings(tab: SettingsTab?) {
         if let tab { settingsHostState.selectedTab = tab }
         if settingsWindow == nil {
@@ -228,10 +279,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 .environment(usageTracker)
                 .environment(hotkeyBindings)
             let hostingController = NSHostingController(rootView: settingsView)
+            // Use the view's own sizing hints — SwiftUI populates the hosting
+            // controller's preferredContentSize from the .frame(ideal:) modifiers.
+            hostingController.sizingOptions = [.preferredContentSize]
+
             let window = NSWindow(contentViewController: hostingController)
             window.title = "Jarvis Settings"
-            window.styleMask = [.titled, .closable, .resizable]
-            window.setContentSize(NSSize(width: 520, height: 500))
+            window.styleMask = [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView]
+            window.setContentSize(NSSize(
+                width: Constants.SettingsWindow.defaultWidth,
+                height: Constants.SettingsWindow.defaultHeight
+            ))
+            window.minSize = NSSize(
+                width: Constants.SettingsWindow.minWidth,
+                height: Constants.SettingsWindow.minHeight
+            )
+            // Persist size across launches — AppKit takes care of this automatically
+            // when we give the window a frame autosave name.
+            window.setFrameAutosaveName("JarvisSettingsWindow")
             window.center()
             settingsWindow = window
         }
