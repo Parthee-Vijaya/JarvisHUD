@@ -26,7 +26,21 @@ final class LocationService: NSObject {
         }
     }
 
+    /// User's home address — used by Info mode's commute estimate. Free-form string,
+    /// gets geocoded on each Info refresh.
+    var homeAddress: String? {
+        get { UserDefaults.standard.string(forKey: Self.homeAddressKey) }
+        set {
+            if let newValue, !newValue.isEmpty {
+                UserDefaults.standard.set(newValue, forKey: Self.homeAddressKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.homeAddressKey)
+            }
+        }
+    }
+
     private static let manualCityKey = "jarvisManualCity"
+    private static let homeAddressKey = "jarvisHomeAddress"
 
     private let manager = CLLocationManager()
     private var lastRefresh: Date?

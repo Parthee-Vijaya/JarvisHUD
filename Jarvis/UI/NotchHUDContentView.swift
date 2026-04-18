@@ -94,7 +94,7 @@ struct NotchHUDContentView: View {
                 .shadow(color: JarvisTheme.criticalGlow.opacity(0.7), radius: 6)
                 .frame(maxHeight: .infinity, alignment: .center)
 
-        case .chat, .uptodate:
+        case .chat, .uptodate, .infoMode:
             EmptyView()
         }
     }
@@ -116,7 +116,7 @@ struct NotchHUDContentView: View {
             errorContent(title: "Fejl", message: message)
         case .permissionError(let permission, let instructions):
             errorContent(title: "\(permission) kræves", message: instructions)
-        case .chat, .uptodate:
+        case .chat, .uptodate, .infoMode:
             EmptyView()
         }
     }

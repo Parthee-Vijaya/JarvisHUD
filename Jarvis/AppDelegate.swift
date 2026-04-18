@@ -32,6 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     )
     let locationService = LocationService()
     lazy var updatesService = UpdatesService(locationService: locationService)
+    lazy var infoModeService = InfoModeService(locationService: locationService)
     private lazy var summaryService = DocumentSummaryService(
         geminiClient: geminiClient,
         hudController: hudController
@@ -72,8 +73,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // isn't interrupted by a permission prompt.
         Task { await hudController.speechService.requestAuthorization() }
 
-        // Wire the Uptodate panel's data source.
+        // Wire the Uptodate + Info panel data sources.
         hudController.updatesService = updatesService
+        hudController.infoModeService = infoModeService
 
         pipeline = RecordingPipeline(
             audioCapture: audioCapture,
@@ -312,6 +314,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeyManager.onSummarize = { [weak self] in
             self?.summaryService.summarizeInteractively()
+        }
+
+        hotkeyManager.onInfoMode = { [weak self] in
+            guard let self else { return }
+            if self.hudController.isInfoModeVisible {
+                self.hudController.close()
+            } else {
+                self.hudController.showInfoMode()
+            }
         }
 
         // Registration happens after this, via `hotkeyBindings.applyAll()` in applicationDidFinishLaunching.

@@ -24,6 +24,7 @@ final class HotkeyManager {
     var onChatToggle: (() -> Void)?
     var onUptodate: (() -> Void)?
     var onSummarize: (() -> Void)?
+    var onInfoMode: (() -> Void)?
 
     /// Install all bindings. Call once at app start after loading from `HotkeyStore`.
     func register(bindings: [HotkeyAction: HotkeyBinding]) {
@@ -89,6 +90,8 @@ final class HotkeyManager {
             hotKey.keyDownHandler = { [weak self] in self?.onUptodate?() }
         case .summarize:
             hotKey.keyDownHandler = { [weak self] in self?.onSummarize?() }
+        case .infoMode:
+            hotKey.keyDownHandler = { [weak self] in self?.onInfoMode?() }
         }
     }
 }

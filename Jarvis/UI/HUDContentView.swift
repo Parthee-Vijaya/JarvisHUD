@@ -77,9 +77,9 @@ struct HUDContentView: View {
                     isPinned: state.isPinned
                 )
             }
-        case .uptodate:
-            // Uptodate gets its own dedicated panel in HUDWindowController; this case
-            // exists only for phase-switch completeness.
+        case .uptodate, .infoMode:
+            // Uptodate + Info both get dedicated panels in HUDWindowController; this
+            // switch case exists only for phase-switch completeness.
             EmptyView()
         }
     }

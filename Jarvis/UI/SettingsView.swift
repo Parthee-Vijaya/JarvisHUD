@@ -22,6 +22,8 @@ struct SettingsView: View {
     @AppStorage(Constants.Defaults.hudStyle) private var hudStyleRaw: String = HUDStylePreference.auto.rawValue
     @State private var porcupineKey = ""
     @State private var wakeWordStatus: String?
+    @State private var homeAddress: String = ""
+    @State private var manualCity: String = ""
 
     private let keychainService = KeychainService()
 
@@ -76,6 +78,10 @@ struct SettingsView: View {
             }
             if let existing = keychainService.getPorcupineKey() {
                 porcupineKey = existing
+            }
+            if let locationService = (NSApp.delegate as? AppDelegate)?.locationService {
+                homeAddress = locationService.homeAddress ?? ""
+                manualCity = locationService.manualCity ?? ""
             }
         }
     }
@@ -256,6 +262,7 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             hudStyleSection
+            locationSection
             GroupBox {
                 HStack {
                     Image(systemName: "command").foregroundStyle(.secondary)
@@ -269,6 +276,36 @@ struct SettingsView: View {
             Spacer()
         }
         .padding()
+    }
+
+    private var locationSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Lokation & hjemadresse").fontWeight(.medium)
+                HStack {
+                    Text("By").frame(width: 70, alignment: .leading).foregroundStyle(.secondary)
+                    TextField("fx København (valgfri — ellers bruges GPS)", text: $manualCity)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Gem") {
+                        (NSApp.delegate as? AppDelegate)?.locationService.manualCity =
+                            manualCity.isEmpty ? nil : manualCity
+                    }
+                    .controlSize(.small)
+                }
+                HStack {
+                    Text("Hjem").frame(width: 70, alignment: .leading).foregroundStyle(.secondary)
+                    TextField("fx Nørregade 12, 1165 København", text: $homeAddress)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Gem") {
+                        (NSApp.delegate as? AppDelegate)?.locationService.homeAddress =
+                            homeAddress.isEmpty ? nil : homeAddress
+                    }
+                    .controlSize(.small)
+                }
+                Text("Hjemadresse bruges af Info mode (⌥I) til at beregne køretid og Tesla-strømforbrug.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var hudStyleSection: some View {

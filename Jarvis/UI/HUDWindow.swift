@@ -14,6 +14,8 @@ class HUDWindowController {
     var activeModeName: String = ""
     /// Set by AppDelegate once services exist, then passed into UptodateView.
     var updatesService: UpdatesService?
+    /// Set by AppDelegate once services exist, then passed into InfoModeView.
+    var infoModeService: InfoModeService?
 
     var onSpeakRequested: ((String) -> Void)?
     var onCloseRequested: (() -> Void)?
@@ -97,6 +99,19 @@ class HUDWindowController {
 
     var isUptodateVisible: Bool {
         hudState.isVisible && hudState.currentPhase == .uptodate
+    }
+
+    func showInfoMode() {
+        cancelRecordingTimer()
+        cancelAutoClose()
+        hudState.currentPhase = .infoMode
+        if panel == nil {
+            presentInfoPanel()
+        }
+    }
+
+    var isInfoModeVisible: Bool {
+        hudState.isVisible && hudState.currentPhase == .infoMode
     }
 
     func close() {
@@ -346,6 +361,47 @@ class HUDWindowController {
             let screenFrame = screen.visibleFrame
             let w: CGFloat = 500
             let h: CGFloat = 620
+            let x = screenFrame.maxX - w - Constants.HUD.padding
+            let y = screenFrame.maxY - h - Constants.HUD.padding
+            panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
+        }
+
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        self.panel = panel
+        hudState.isVisible = true
+    }
+
+    // MARK: - Info Panel
+
+    private func presentInfoPanel() {
+        guard let infoModeService else {
+            LoggingService.shared.log("Info panel requested but service not wired", level: .warning)
+            return
+        }
+        cancelAutoClose()
+
+        let view = InfoModeView(service: infoModeService) { [weak self] in self?.close() }
+            .frame(minWidth: 520, minHeight: 620)
+            .jarvisHUDBackground(showReticle: false)
+
+        let hostingController = NSHostingController(rootView: view)
+
+        let panel = NSPanel(contentViewController: hostingController)
+        panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.isMovableByWindowBackground = true
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.minSize = NSSize(width: 520, height: 560)
+
+        if let screen = NSScreen.main {
+            let screenFrame = screen.visibleFrame
+            let w: CGFloat = 560
+            let h: CGFloat = 680
             let x = screenFrame.maxX - w - Constants.HUD.padding
             let y = screenFrame.maxY - h - Constants.HUD.padding
             panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
