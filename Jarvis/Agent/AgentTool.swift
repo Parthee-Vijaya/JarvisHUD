@@ -28,12 +28,16 @@ final class AgentToolRegistry {
     private var tools: [String: AgentTool] = [:]
 
     private init() {
-        // Read-only tools shipped in β1. Write tools follow in β2 behind
-        // confirmation UI.
+        // Read-only tools (no confirmation needed)
         register(ReadFileTool.tool)
         register(ListDirectoryTool.tool)
         register(SearchFilesTool.tool)
         register(StatFileTool.tool)
+        // Destructive tools shipped in β.2 — each sets requiresConfirmation=true
+        register(WriteFileTool.tool)
+        register(RenameFileTool.tool)
+        register(DeleteFileTool.tool)
+        register(CreateDirectoryTool.tool)
     }
 
     func register(_ tool: AgentTool) {

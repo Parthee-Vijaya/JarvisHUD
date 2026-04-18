@@ -13,6 +13,7 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
     case uptodate
     case summarize
     case infoMode
+    case agent
 
     var id: String { rawValue }
 
@@ -28,6 +29,7 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
         case .uptodate:    return "Uptodate (vejr + nyheder)"
         case .summarize:   return "Summarize dokument"
         case .infoMode:    return "Info mode (system + commute)"
+        case .agent:       return "Agent (filoperationer via Claude)"
         }
     }
 
@@ -35,7 +37,7 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
     var isPushToTalk: Bool {
         switch self {
         case .dictation, .qna, .vision, .translate: return true
-        case .cycleMode, .toggleChat, .uptodate, .summarize, .infoMode: return false
+        case .cycleMode, .toggleChat, .uptodate, .summarize, .infoMode, .agent: return false
         }
     }
 
@@ -56,6 +58,9 @@ enum HotkeyAction: String, CaseIterable, Codable, Identifiable {
             return HotkeyBinding(action: self, keyCode: Key.s.carbonKeyCode, modifiersRaw: flags.rawValue)
         case .infoMode:
             return HotkeyBinding(action: self, keyCode: Key.i.carbonKeyCode, modifiersRaw: NSEvent.ModifierFlags.option.rawValue)
+        case .agent:
+            let flags: NSEvent.ModifierFlags = [.option, .shift]
+            return HotkeyBinding(action: self, keyCode: Key.a.carbonKeyCode, modifiersRaw: flags.rawValue)
         }
     }
 }

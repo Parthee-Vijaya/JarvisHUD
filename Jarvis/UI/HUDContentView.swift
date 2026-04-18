@@ -18,6 +18,11 @@ struct HUDContentView: View {
     var onChatSend: ((String) -> Void)?
     var onChatVoice: (() -> Void)?
     var onPin: (() -> Void)?
+    // Agent-mode plumbing (β.2)
+    var agentChatSession: ChatSession?
+    var onAgentChatSend: ((String) -> Void)?
+    var onAgentApprove: (() -> Void)?
+    var onAgentReject: (() -> Void)?
 
     @State private var appeared = false
 
@@ -84,6 +89,19 @@ struct HUDContentView: View {
                     onClose: onClose,
                     onPin: { onPin?() },
                     isPinned: state.isPinned
+                )
+            }
+        case .agentChat:
+            if let agentChatSession, let onAgentChatSend {
+                ChatView(
+                    chatSession: agentChatSession,
+                    onSend: onAgentChatSend,
+                    onVoice: nil,
+                    onClose: onClose,
+                    onPin: { onPin?() },
+                    isPinned: state.isPinned,
+                    onApproveConfirmation: onAgentApprove,
+                    onRejectConfirmation: onAgentReject
                 )
             }
         case .uptodate, .infoMode:

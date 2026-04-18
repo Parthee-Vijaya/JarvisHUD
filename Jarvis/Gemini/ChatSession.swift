@@ -30,6 +30,16 @@ class ChatSession {
     var messages: [ChatMessage] = []
     var isStreaming = false
 
+    /// Tool call currently awaiting user approval in agent mode. When non-nil
+    /// the chat UI renders an inline confirmation card; nil means nothing is
+    /// pending. v5.0.0-beta.2.
+    var pendingConfirmation: PendingToolCall?
+
+    /// Inline log of tool invocations from the current agent conversation —
+    /// surfaces in the chat as collapsible cards so the user can see what the
+    /// agent did without tailing the audit-log file.
+    var agentToolInvocations: [AgentService.ToolInvocation] = []
+
     func addUserMessage(_ text: String) {
         messages.append(ChatMessage(role: .user, text: text))
     }
@@ -53,6 +63,8 @@ class ChatSession {
     func clear() {
         messages.removeAll()
         isStreaming = false
+        pendingConfirmation = nil
+        agentToolInvocations.removeAll()
     }
 
     /// Turn the message log into REST history suitable for

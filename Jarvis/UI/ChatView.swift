@@ -9,6 +9,10 @@ struct ChatView: View {
     let onClose: () -> Void
     let onPin: () -> Void
     let isPinned: Bool
+    /// Optional approve / reject callbacks — present when the hosting pipeline
+    /// is AgentChatPipeline, nil for the Gemini ChatPipeline (no confirmations).
+    var onApproveConfirmation: (() -> Void)? = nil
+    var onRejectConfirmation: (() -> Void)? = nil
 
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
@@ -18,6 +22,9 @@ struct ChatView: View {
             chatHeader
             Divider().background(JarvisTheme.hairline)
             messagesArea
+            if let pending = chatSession.pendingConfirmation {
+                confirmationCard(pending)
+            }
             Divider().background(JarvisTheme.hairline)
             inputBar
         }
@@ -28,6 +35,85 @@ struct ChatView: View {
         .onAppear {
             // Small delay so the panel has finished becoming key before we grab focus.
             DispatchQueue.main.async { inputFocused = true }
+        }
+    }
+
+    // MARK: - Confirmation card
+
+    private func confirmationCard(_ pending: PendingToolCall) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: iconForTool(pending.toolName))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.accent)
+                Text("J.A.R.V.I.S vil \(pending.humanSummary.lowercased(with: Locale(identifier: "da_DK")))")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.textPrimary)
+                Spacer()
+            }
+
+            if !pending.arguments.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(pending.arguments, id: \.key) { pair in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(pair.key)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(JarvisTheme.textMuted)
+                                .frame(width: 80, alignment: .leading)
+                            Text(pair.value)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(JarvisTheme.textSecondary)
+                                .lineLimit(3)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Spacer()
+                Button {
+                    onRejectConfirmation?()
+                } label: {
+                    Text("Afvis")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(JarvisTheme.textSecondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(JarvisTheme.surfaceElevated))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    onApproveConfirmation?()
+                } label: {
+                    Text("Tillad")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(JarvisTheme.accent))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(JarvisTheme.surfaceElevated.opacity(0.7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(JarvisTheme.accent.opacity(0.6), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
+    private func iconForTool(_ name: String) -> String {
+        switch name {
+        case "write_file":       return "pencil.and.outline"
+        case "rename_file":      return "arrow.triangle.2.circlepath"
+        case "delete_file":      return "trash"
+        case "create_directory": return "folder.badge.plus"
+        default:                 return "wrench.and.screwdriver"
         }
     }
 

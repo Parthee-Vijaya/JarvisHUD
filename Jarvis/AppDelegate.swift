@@ -31,6 +31,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         accessKeyProvider: { [weak keychainService] in keychainService?.getPorcupineKey() }
     )
     let voiceCommandService = VoiceCommandService()
+    /// Dedicated chat session for agent mode — kept separate from the Gemini
+    /// chat session so their histories and tool-call logs don't mix.
+    let agentChatSession = ChatSession()
+    private var agentChatPipeline: AgentChatPipeline?
     let locationService = LocationService()
     lazy var updatesService = UpdatesService(locationService: locationService)
     lazy var infoModeService = InfoModeService(locationService: locationService)
@@ -117,6 +121,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.hudController.hudState.isPinned.toggle()
         }
+
+        // Agent chat — lazily instantiated on first ⌥⇧A press so users who
+        // never use it don't pay the Anthropic provider init cost.
+        hudController.agentChatSession = agentChatSession
+        hudController.onAgentChatSend = { [weak self] text in
+            self?.ensureAgentChatPipeline().sendTextMessage(text)
+        }
+        hudController.onAgentApprove = { [weak self] in
+            self?.ensureAgentChatPipeline().approvePendingConfirmation()
+        }
+        hudController.onAgentReject = { [weak self] in
+            self?.ensureAgentChatPipeline().rejectPendingConfirmation()
+        }
+    }
+
+    /// Returns the agent pipeline, instantiating it on first use. Reads the
+    /// user's preferred Claude model from UserDefaults so Settings updates
+    /// can take effect on the next run.
+    private func ensureAgentChatPipeline() -> AgentChatPipeline {
+        if let pipeline = agentChatPipeline { return pipeline }
+        let provider = AnthropicProvider(keychain: keychainService)
+        let modelID = UserDefaults.standard.string(forKey: Constants.Defaults.agentClaudeModel)
+            ?? "claude-sonnet-4-6"
+        let pipeline = AgentChatPipeline(
+            provider: provider,
+            chatSession: agentChatSession,
+            modelID: modelID
+        )
+        agentChatPipeline = pipeline
+        return pipeline
     }
 
     /// Called by `SettingsView` after the user saves a new API key so the chat pipeline
@@ -383,6 +417,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeyManager.onSummarize = { [weak self] in
             self?.summaryService.summarizeInteractively()
+        }
+
+        hotkeyManager.onAgent = { [weak self] in
+            guard let self else { return }
+            if self.hudController.isAgentChatVisible {
+                self.hudController.saveChatFrame()
+                self.hudController.close()
+            } else {
+                self.hudController.showAgentChat()
+            }
         }
 
         hotkeyManager.onInfoMode = { [weak self] in

@@ -16,6 +16,12 @@ class HUDWindowController {
     var updatesService: UpdatesService?
     /// Set by AppDelegate once services exist, then passed into InfoModeView.
     var infoModeService: InfoModeService?
+    /// Agent-mode chat (separate session from regular Gemini chat so the two
+    /// don't mix history).
+    var agentChatSession: ChatSession?
+    var onAgentChatSend: ((String) -> Void)?
+    var onAgentApprove: (() -> Void)?
+    var onAgentReject: (() -> Void)?
 
     var onSpeakRequested: ((String) -> Void)?
     var onCloseRequested: (() -> Void)?
@@ -86,6 +92,20 @@ class HUDWindowController {
         hudState.isVisible && hudState.currentPhase == .chat
     }
 
+    func showAgentChat() {
+        cancelRecordingTimer()
+        hudState.currentPhase = .agentChat
+        if panel == nil {
+            presentChatPanel()
+        } else {
+            resizePanelForChat()
+        }
+    }
+
+    var isAgentChatVisible: Bool {
+        hudState.isVisible && hudState.currentPhase == .agentChat
+    }
+
     func showUptodate() {
         cancelRecordingTimer()
         cancelAutoClose()
@@ -143,7 +163,11 @@ class HUDWindowController {
             chatSession: chatSession,
             onChatSend: { [weak self] text in self?.onChatSend?(text) },
             onChatVoice: onChatVoice != nil ? { [weak self] in self?.onChatVoice?() } : nil,
-            onPin: { [weak self] in self?.onPinToggle?() }
+            onPin: { [weak self] in self?.onPinToggle?() },
+            agentChatSession: agentChatSession,
+            onAgentChatSend: onAgentChatSend != nil ? { [weak self] text in self?.onAgentChatSend?(text) } : nil,
+            onAgentApprove: onAgentApprove != nil ? { [weak self] in self?.onAgentApprove?() } : nil,
+            onAgentReject: onAgentReject != nil ? { [weak self] in self?.onAgentReject?() } : nil
         )
 
         let hostingController = NSHostingController(rootView: contentView)
@@ -195,7 +219,11 @@ class HUDWindowController {
             chatSession: chatSession,
             onChatSend: { [weak self] text in self?.onChatSend?(text) },
             onChatVoice: onChatVoice != nil ? { [weak self] in self?.onChatVoice?() } : nil,
-            onPin: { [weak self] in self?.onPinToggle?() }
+            onPin: { [weak self] in self?.onPinToggle?() },
+            agentChatSession: agentChatSession,
+            onAgentChatSend: onAgentChatSend != nil ? { [weak self] text in self?.onAgentChatSend?(text) } : nil,
+            onAgentApprove: onAgentApprove != nil ? { [weak self] in self?.onAgentApprove?() } : nil,
+            onAgentReject: onAgentReject != nil ? { [weak self] in self?.onAgentReject?() } : nil
         )
 
         let hostingController = NSHostingController(rootView: contentView)
