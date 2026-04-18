@@ -76,6 +76,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // and register their tools with the shared agent registry. Runs in
             // the background — we don't block app launch if a server is slow.
             Task { await MCPRegistry.shared.bootstrap() }
+            // v1.2.0: ping GitHub Releases once a day to see if a newer
+            // Jarvis DMG is published. Non-blocking; prompts only when a
+            // higher semver is found.
+            updateChecker.checkIfDue()
             LoggingService.shared.log("Jarvis v\(Constants.appVersion) started")
         }
     }
@@ -239,6 +243,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private let conversationStore = ConversationStore()
+    private let updateChecker = UpdateChecker()
 
     private func refreshConversationHistory() {
         hudController.conversationHistory = conversationStore.loadAllMetadata()
@@ -419,6 +424,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cheatSheetItem.keyEquivalentModifierMask = [.command]
         statusMenu.addItem(cheatSheetItem)
 
+        let updatesItem = NSMenuItem(title: "Søg efter opdateringer…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updatesItem.target = self
+        statusMenu.addItem(updatesItem)
+
         let settingsItem = NSMenuItem(title: "Indstillinger…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         statusMenu.addItem(settingsItem)
@@ -489,6 +498,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var cheatSheetWindow: NSWindow?
+
+    @objc private func checkForUpdates() {
+        Task { await updateChecker.checkNow(userInitiated: true) }
+    }
 
     @objc private func openCheatSheet() {
         if let window = cheatSheetWindow, window.isVisible {
