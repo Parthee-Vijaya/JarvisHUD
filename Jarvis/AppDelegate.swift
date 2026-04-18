@@ -31,10 +31,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         accessKeyProvider: { [weak keychainService] in keychainService?.getPorcupineKey() }
     )
     let voiceCommandService = VoiceCommandService()
-    /// Dedicated chat session for agent mode — kept separate from the Gemini
-    /// chat session so their histories and tool-call logs don't mix.
-    let agentChatSession = ChatSession()
+    /// β.11: agent chat now shares the main chat session so the unified
+    /// Spotlight-style chat window renders regular chat + agent turns in one
+    /// conversation. Kept as a computed alias so legacy call sites still
+    /// resolve without edits.
+    var agentChatSession: ChatSession { chatSession }
     private var agentChatPipeline: AgentChatPipeline?
+    private var commandRouter: ChatCommandRouter?
     let locationService = LocationService()
     lazy var updatesService = UpdatesService(locationService: locationService)
     lazy var infoModeService = InfoModeService(locationService: locationService)
@@ -133,6 +136,67 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hudController.onAgentReject = { [weak self] in
             self?.ensureAgentChatPipeline().rejectPendingConfirmation()
+        }
+
+        // β.11: unified command router — chat window uses this to dispatch
+        // all modes (text/voice/screenshot/document) into a single message
+        // thread, keeping direct hotkey invocations unchanged.
+        let router = ChatCommandRouter(
+            chatPipeline: chatPipeline,
+            agentChatPipeline: { [weak self] in self?.ensureAgentChatPipeline() },
+            geminiClient: geminiClient,
+            screenCapture: screenCapture,
+            summaryService: summaryService,
+            chatSession: chatSession
+        )
+        commandRouter = router
+        hudController.commandRouter = router
+        hudController.availableModes = modeManager.allModes
+        hudController.shortcutLookup = { [weak self] mode in
+            guard let self else { return nil }
+            return self.shortcutStringFor(mode: mode)
+        }
+        hudController.onToggleVoiceRecord = { [weak self] in
+            self?.handleChatVoiceToggle()
+        }
+        hudController.permissionsManager = permissions
+        hudController.hasGeminiKey = keychainService.hasAPIKey
+        hudController.hasAnthropicKey = keychainService.getAnthropicKey() != nil
+        hudController.onOpenSettings = { [weak self] in
+            self?.openSettings()
+        }
+    }
+
+    /// Map a mode to the hotkey that invokes its equivalent direct action,
+    /// so the mode picker can show keyboard shortcuts. Only built-ins with a
+    /// matching `HotkeyAction` return a value — custom user modes just show
+    /// no shortcut.
+    private func shortcutStringFor(mode: Mode) -> String? {
+        let action: HotkeyAction?
+        switch mode.id {
+        case BuiltInModes.dictation.id: action = .dictation
+        case BuiltInModes.qna.id:       action = .qna
+        case BuiltInModes.vision.id:    action = .vision
+        case BuiltInModes.translate.id: action = .translate
+        case BuiltInModes.summarize.id: action = .summarize
+        case BuiltInModes.agent.id:     action = .agent
+        case BuiltInModes.chat.id:      action = .toggleChat
+        default:                        action = nil
+        }
+        guard let action else { return nil }
+        return hotkeyBindings.binding(for: action).displayString
+    }
+
+    /// Toggles a dictation-from-chat recording. Uses the existing
+    /// RecordingPipeline — when the transcript finalises, it lands in the
+    /// chat session via the pipeline's existing post-process hook.
+    private func handleChatVoiceToggle() {
+        if hudController.isVoiceRecording {
+            pipeline.handleRecordStop()
+            hudController.isVoiceRecording = false
+        } else {
+            pipeline.handleRecordStart(mode: BuiltInModes.dictation, captureScreen: false)
+            hudController.isVoiceRecording = true
         }
     }
 

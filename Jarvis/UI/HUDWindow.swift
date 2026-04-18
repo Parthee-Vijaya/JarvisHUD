@@ -31,6 +31,16 @@ class HUDWindowController {
     var onChatVoice: (() -> Void)?
     var onPinToggle: (() -> Void)?
     var chatSession: ChatSession?
+    // β.11: unified chat command-bar wiring.
+    var commandRouter: ChatCommandRouter?
+    var availableModes: [Mode] = []
+    var shortcutLookup: (Mode) -> String? = { _ in nil }
+    var onToggleVoiceRecord: (() -> Void)?
+    var isVoiceRecording: Bool = false
+    var permissionsManager: PermissionsManager?
+    var hasGeminiKey: Bool = false
+    var hasAnthropicKey: Bool = false
+    var onOpenSettings: (() -> Void)?
 
     private var recordingStartTime: Date?
 
@@ -150,8 +160,11 @@ class HUDWindowController {
         presentCornerPanel()
     }
 
-    private func presentCornerPanel() {
-        let contentView = HUDContentView(
+    /// Builds the single HUDContentView used by both the corner HUD panel
+    /// (recording / result / error) and the Spotlight-style chat panel.
+    /// Centralised so β.11's new command-bar plumbing only needs one wiring site.
+    private func makeHUDContentView() -> HUDContentView {
+        HUDContentView(
             state: hudState,
             audioLevel: audioLevel,
             waveform: waveform,
@@ -167,8 +180,21 @@ class HUDWindowController {
             agentChatSession: agentChatSession,
             onAgentChatSend: onAgentChatSend != nil ? { [weak self] text in self?.onAgentChatSend?(text) } : nil,
             onAgentApprove: onAgentApprove != nil ? { [weak self] in self?.onAgentApprove?() } : nil,
-            onAgentReject: onAgentReject != nil ? { [weak self] in self?.onAgentReject?() } : nil
+            onAgentReject: onAgentReject != nil ? { [weak self] in self?.onAgentReject?() } : nil,
+            commandRouter: commandRouter,
+            availableModes: availableModes,
+            shortcutLookup: shortcutLookup,
+            onToggleVoiceRecord: onToggleVoiceRecord != nil ? { [weak self] in self?.onToggleVoiceRecord?() } : nil,
+            isVoiceRecording: isVoiceRecording,
+            permissionsManager: permissionsManager,
+            hasGeminiKey: hasGeminiKey,
+            hasAnthropicKey: hasAnthropicKey,
+            onOpenSettings: onOpenSettings != nil ? { [weak self] in self?.onOpenSettings?() } : nil
         )
+    }
+
+    private func presentCornerPanel() {
+        let contentView = makeHUDContentView()
 
         let hostingController = NSHostingController(rootView: contentView)
 
@@ -207,24 +233,7 @@ class HUDWindowController {
             return
         }
 
-        let contentView = HUDContentView(
-            state: hudState,
-            audioLevel: audioLevel,
-            waveform: waveform,
-            speechService: speechService,
-            activeModeName: activeModeName,
-            onClose: { [weak self] in self?.close() },
-            onSpeak: { [weak self] text in self?.onSpeakRequested?(text) },
-            onPermissionAction: { [weak self] in self?.onPermissionAction?() },
-            chatSession: chatSession,
-            onChatSend: { [weak self] text in self?.onChatSend?(text) },
-            onChatVoice: onChatVoice != nil ? { [weak self] in self?.onChatVoice?() } : nil,
-            onPin: { [weak self] in self?.onPinToggle?() },
-            agentChatSession: agentChatSession,
-            onAgentChatSend: onAgentChatSend != nil ? { [weak self] text in self?.onAgentChatSend?(text) } : nil,
-            onAgentApprove: onAgentApprove != nil ? { [weak self] in self?.onAgentApprove?() } : nil,
-            onAgentReject: onAgentReject != nil ? { [weak self] in self?.onAgentReject?() } : nil
-        )
+        let contentView = makeHUDContentView()
 
         let hostingController = NSHostingController(rootView: contentView)
 
@@ -241,18 +250,15 @@ class HUDWindowController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.minSize = NSSize(width: Constants.ChatHUD.minWidth, height: Constants.ChatHUD.minHeight)
 
-        // Restore saved frame or use defaults
-        let savedW = UserDefaults.standard.double(forKey: Constants.Defaults.chatFrameW)
-        let savedH = UserDefaults.standard.double(forKey: Constants.Defaults.chatFrameH)
-        let w = savedW > 0 ? savedW : Constants.ChatHUD.width
-        let h = savedH > 0 ? savedH : Constants.ChatHUD.height
-
+        // β.11: always open centered, Spotlight-style. Frame persistence
+        // dropped — the user can still drag within a session, but re-opening
+        // snaps back to centre for predictable behaviour.
+        let w = Constants.ChatHUD.width
+        let h = Constants.ChatHUD.height
         if let screen = NSScreen.main {
             let screenFrame = screen.visibleFrame
-            let savedX = UserDefaults.standard.double(forKey: Constants.Defaults.chatFrameX)
-            let savedY = UserDefaults.standard.double(forKey: Constants.Defaults.chatFrameY)
-            let x = savedX > 0 ? savedX : screenFrame.maxX - w - Constants.HUD.padding
-            let y = savedY > 0 ? savedY : screenFrame.maxY - h - Constants.HUD.padding
+            let x = screenFrame.midX - w / 2
+            let y = screenFrame.midY - h / 2
             panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
         }
 
@@ -366,22 +372,23 @@ class HUDWindowController {
         guard let panel else { return }
         let w = Constants.ChatHUD.width
         let h = Constants.ChatHUD.height
-        let origin = panel.frame.origin
         // Stay borderless — ChatView's own header owns close/pin, so we don't want
         // a ghost system titlebar reserving space above our cyan background.
         panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
         panel.minSize = NSSize(width: Constants.ChatHUD.minWidth, height: Constants.ChatHUD.minHeight)
-        panel.setFrame(NSRect(x: origin.x, y: origin.y, width: w, height: h), display: true, animate: true)
+        // β.11: always recenter on chat-mode transition too.
+        if let screen = NSScreen.main {
+            let screenFrame = screen.visibleFrame
+            let x = screenFrame.midX - w / 2
+            let y = screenFrame.midY - h / 2
+            panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true, animate: true)
+        }
         panel.makeKey()
     }
 
-    func saveChatFrame() {
-        guard let frame = panel?.frame else { return }
-        UserDefaults.standard.set(frame.origin.x, forKey: Constants.Defaults.chatFrameX)
-        UserDefaults.standard.set(frame.origin.y, forKey: Constants.Defaults.chatFrameY)
-        UserDefaults.standard.set(frame.size.width, forKey: Constants.Defaults.chatFrameW)
-        UserDefaults.standard.set(frame.size.height, forKey: Constants.Defaults.chatFrameH)
-    }
+    /// No-op retained for call-site compatibility — chat panel no longer
+    /// persists its frame. Safe to delete once all callers are updated.
+    func saveChatFrame() {}
 
     // MARK: - Timers
 

@@ -6,7 +6,7 @@ enum Constants {
     /// breaking Keychain-service IDs and log paths.
     static let displayName = "J.A.R.V.I.S"
     static let appName = "Jarvis"
-    static let appVersion = "5.0.0-beta.10"
+    static let appVersion = "5.0.0-beta.11"
     static let bundleID = "pavi.Jarvis"
 
     // MARK: - Spacing scale (use these instead of magic numbers)
@@ -88,10 +88,11 @@ enum Constants {
 
     // MARK: - Chat HUD Dimensions
     enum ChatHUD {
-        static let width: CGFloat = 420
+        /// Default size for the centered Spotlight-style chat window (β.11+).
+        static let width: CGFloat = 720
         static let height: CGFloat = 520
-        static let minWidth: CGFloat = 320
-        static let minHeight: CGFloat = 400
+        static let minWidth: CGFloat = 520
+        static let minHeight: CGFloat = 360
     }
 
     // MARK: - UserDefaults Keys
@@ -99,10 +100,8 @@ enum Constants {
         static let hasLaunchedBefore = "hasLaunchedBefore"
         static let ttsEnabled = "ttsEnabled"
         static let hudPinned = "hudPinned"
-        static let chatFrameX = "chatFrameX"
-        static let chatFrameY = "chatFrameY"
-        static let chatFrameW = "chatFrameW"
-        static let chatFrameH = "chatFrameH"
+        // Chat-frame keys removed in β.11 — window is now always centered.
+        // Defaults left in place get overwritten by the centering logic.
         static let wakeWordEnabled = "wakeWordEnabled"
         static let voiceCommandsEnabled = "voiceCommandsEnabled"
         static let claudeDailyLimitTokens = "claudeDailyLimitTokens"

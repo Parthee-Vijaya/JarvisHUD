@@ -11,7 +11,9 @@ enum BuiltInModes {
         model: .flash,
         outputType: .paste,
         maxTokens: 2048,
-        isBuiltIn: true
+        isBuiltIn: true,
+        icon: "mic.fill",
+        inputKind: .voice
     )
 
     static let vibeCode = Mode(
@@ -26,7 +28,9 @@ enum BuiltInModes {
         model: .pro,
         outputType: .paste,
         maxTokens: 4096,
-        isBuiltIn: true
+        isBuiltIn: true,
+        icon: "curlybraces.square",
+        inputKind: .text
     )
 
     static let professional = Mode(
@@ -40,7 +44,9 @@ enum BuiltInModes {
         model: .flash,
         outputType: .paste,
         maxTokens: 2048,
-        isBuiltIn: true
+        isBuiltIn: true,
+        icon: "briefcase.fill",
+        inputKind: .text
     )
 
     static let qna = Mode(
@@ -80,7 +86,9 @@ enum BuiltInModes {
         outputType: .hud,
         maxTokens: 1500,
         isBuiltIn: true,
-        webSearch: true
+        webSearch: true,
+        icon: "questionmark.circle",
+        inputKind: .text
     )
 
     static let vision = Mode(
@@ -109,7 +117,9 @@ enum BuiltInModes {
         outputType: .hud,
         maxTokens: 2048,
         isBuiltIn: true,
-        webSearch: true
+        webSearch: true,
+        icon: "camera.viewfinder",
+        inputKind: .screenshot
     )
 
     static let chat = Mode(
@@ -123,7 +133,9 @@ enum BuiltInModes {
         model: .flash,
         outputType: .chat,
         maxTokens: 4096,
-        isBuiltIn: true
+        isBuiltIn: true,
+        icon: "bubble.left.and.bubble.right.fill",
+        inputKind: .text
     )
 
     static let translate = Mode(
@@ -137,7 +149,9 @@ enum BuiltInModes {
         model: .flash,
         outputType: .paste,
         maxTokens: 2048,
-        isBuiltIn: true
+        isBuiltIn: true,
+        icon: "character.bubble.fill",
+        inputKind: .text
     )
 
     static let agent = Mode(
@@ -161,7 +175,9 @@ enum BuiltInModes {
         isBuiltIn: true,
         webSearch: false,
         provider: .anthropic,
-        agentTools: true
+        agentTools: true,
+        icon: "sparkles",
+        inputKind: .text
     )
 
     static let summarize = Mode(
@@ -182,7 +198,9 @@ enum BuiltInModes {
         model: .flash,
         outputType: .hud,
         maxTokens: 2048,
-        isBuiltIn: true
+        isBuiltIn: true,
+        icon: "doc.text.magnifyingglass",
+        inputKind: .document
     )
 
     static let all: [Mode] = [dictation, vibeCode, professional, qna, vision, chat, translate, summarize, agent]

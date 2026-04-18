@@ -23,6 +23,16 @@ struct HUDContentView: View {
     var onAgentChatSend: ((String) -> Void)?
     var onAgentApprove: (() -> Void)?
     var onAgentReject: (() -> Void)?
+    // β.11: unified chat command bar + router
+    var commandRouter: ChatCommandRouter?
+    var availableModes: [Mode] = []
+    var shortcutLookup: (Mode) -> String? = { _ in nil }
+    var onToggleVoiceRecord: (() -> Void)?
+    var isVoiceRecording: Bool = false
+    var permissionsManager: PermissionsManager?
+    var hasGeminiKey: Bool = false
+    var hasAnthropicKey: Bool = false
+    var onOpenSettings: (() -> Void)?
 
     @State private var appeared = false
 
@@ -80,7 +90,10 @@ struct HUDContentView: View {
             errorView(message: message)
         case .permissionError(let permission, let instructions):
             permissionErrorView(permission: permission, instructions: instructions)
-        case .chat:
+        case .chat, .agentChat:
+            // β.11: chat and agent chat share one unified panel. Agent mode is
+            // picked via the command-bar dropdown rather than opening a
+            // separate phase.
             if let chatSession, let onChatSend {
                 ChatView(
                     chatSession: chatSession,
@@ -88,20 +101,18 @@ struct HUDContentView: View {
                     onVoice: onChatVoice,
                     onClose: onClose,
                     onPin: { onPin?() },
-                    isPinned: state.isPinned
-                )
-            }
-        case .agentChat:
-            if let agentChatSession, let onAgentChatSend {
-                ChatView(
-                    chatSession: agentChatSession,
-                    onSend: onAgentChatSend,
-                    onVoice: nil,
-                    onClose: onClose,
-                    onPin: { onPin?() },
                     isPinned: state.isPinned,
                     onApproveConfirmation: onAgentApprove,
-                    onRejectConfirmation: onAgentReject
+                    onRejectConfirmation: onAgentReject,
+                    commandRouter: commandRouter,
+                    availableModes: availableModes,
+                    shortcutLookup: shortcutLookup,
+                    onToggleVoiceRecord: onToggleVoiceRecord,
+                    isVoiceRecording: isVoiceRecording,
+                    permissionsManager: permissionsManager,
+                    hasGeminiKey: hasGeminiKey,
+                    hasAnthropicKey: hasAnthropicKey,
+                    onOpenSettings: onOpenSettings
                 )
             }
         case .uptodate, .infoMode:

@@ -26,6 +26,19 @@ enum OutputType: String, Codable, CaseIterable {
     }
 }
 
+/// What kind of input the mode takes when launched from the chat command bar.
+/// The command bar's send button adapts its behaviour per `InputKind`.
+enum InputKind: String, Codable, CaseIterable {
+    /// Plain text from the command bar's TextField.
+    case text
+    /// Mic capture — selecting the mode auto-starts recording; enter stops.
+    case voice
+    /// Trigger `ScreenCaptureService.captureActiveWindow()` + optional text prompt.
+    case screenshot
+    /// Open an `NSOpenPanel` for the user to pick a document.
+    case document
+}
+
 struct Mode: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
@@ -45,6 +58,15 @@ struct Mode: Identifiable, Codable, Equatable {
     /// If true, the mode routes through `AgentService` with the file-op tool
     /// registry enabled. Only honoured on Anthropic-provider modes.
     var agentTools: Bool
+    /// SF Symbol name shown next to the mode in the chat command bar's mode
+    /// picker. Added in v5.0.0-beta.11 — older JSON decodes to a default
+    /// derived from `outputType`.
+    var icon: String
+    /// How the chat command bar should collect input for this mode when it's
+    /// launched from there (direct hotkey invocations bypass this and keep
+    /// their legacy paste/HUD flow). Added in v5.0.0-beta.11 — older JSON
+    /// decodes as `.text`.
+    var inputKind: InputKind
 
     init(
         id: UUID,
@@ -56,7 +78,9 @@ struct Mode: Identifiable, Codable, Equatable {
         isBuiltIn: Bool,
         webSearch: Bool = false,
         provider: AIProviderType = .gemini,
-        agentTools: Bool = false
+        agentTools: Bool = false,
+        icon: String = "sparkles",
+        inputKind: InputKind = .text
     ) {
         self.id = id
         self.name = name
@@ -68,11 +92,13 @@ struct Mode: Identifiable, Codable, Equatable {
         self.webSearch = webSearch
         self.provider = provider
         self.agentTools = agentTools
+        self.icon = icon
+        self.inputKind = inputKind
     }
 
     // Custom Codable so older JSON files (v3.0 custom modes without `webSearch`) decode cleanly.
     private enum CodingKeys: String, CodingKey {
-        case id, name, systemPrompt, model, outputType, maxTokens, isBuiltIn, webSearch, provider, agentTools
+        case id, name, systemPrompt, model, outputType, maxTokens, isBuiltIn, webSearch, provider, agentTools, icon, inputKind
     }
 
     init(from decoder: Decoder) throws {
@@ -87,6 +113,8 @@ struct Mode: Identifiable, Codable, Equatable {
         webSearch = try c.decodeIfPresent(Bool.self, forKey: .webSearch) ?? false
         provider = try c.decodeIfPresent(AIProviderType.self, forKey: .provider) ?? .gemini
         agentTools = try c.decodeIfPresent(Bool.self, forKey: .agentTools) ?? false
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "sparkles"
+        inputKind = try c.decodeIfPresent(InputKind.self, forKey: .inputKind) ?? .text
     }
 
     func encode(to encoder: Encoder) throws {
@@ -101,6 +129,8 @@ struct Mode: Identifiable, Codable, Equatable {
         try c.encode(webSearch, forKey: .webSearch)
         try c.encode(provider, forKey: .provider)
         try c.encode(agentTools, forKey: .agentTools)
+        try c.encode(icon, forKey: .icon)
+        try c.encode(inputKind, forKey: .inputKind)
     }
 
     static func == (lhs: Mode, rhs: Mode) -> Bool {

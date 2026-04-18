@@ -29,12 +29,21 @@ final class ChatPipeline {
     // MARK: - Text
 
     func sendTextMessage(_ text: String) {
+        sendTextMessage(text, mode: nil)
+    }
+
+    /// Overload used by the ChatCommandRouter (β.11) so different chat command-bar
+    /// modes (Q&A, Translate, etc.) can reuse the same pipeline with mode-specific
+    /// system prompts + web-search flags. Passing `nil` falls back to the pipeline's
+    /// init-time mode (default: `.chat`).
+    func sendTextMessage(_ text: String, mode: Mode?) {
         chatSession.addUserMessage(text)
         let placeholderID = chatSession.addAssistantMessage("")
         chatSession.isStreaming = true
 
+        let effectiveMode = mode ?? self.mode
         Task {
-            await streamResponse(placeholderID: placeholderID, text: text)
+            await streamResponse(placeholderID: placeholderID, text: text, mode: effectiveMode)
         }
     }
 
@@ -63,7 +72,7 @@ final class ChatPipeline {
 
     // MARK: - Streaming core
 
-    private func streamResponse(placeholderID: UUID, text: String) async {
+    private func streamResponse(placeholderID: UUID, text: String, mode: Mode? = nil) async {
         // Build history from the session, dropping the trailing user message
         // (which is passed separately to the REST call) and any empty placeholders.
         let history = chatSession.currentHistory(excludingLastUser: true)
@@ -71,7 +80,7 @@ final class ChatPipeline {
         let result = await geminiClient.sendChatStreaming(
             history: history,
             text: text,
-            mode: mode,
+            mode: mode ?? self.mode,
             onDelta: { [weak self] delta in
                 self?.chatSession.appendToAssistant(id: placeholderID, delta: delta)
             }

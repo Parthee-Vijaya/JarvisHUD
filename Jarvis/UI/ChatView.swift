@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// Chat HUD — Claude-desktop inspired layout. Minimal header, scrollable
-/// message area, clean input bar at the bottom.
+/// Chat HUD — β.11 Spotlight-style. Command bar on top unifies mode
+/// launching; message list below renders all modes' output as bubbles.
 struct ChatView: View {
     let chatSession: ChatSession
+    /// Legacy send (Gemini-only). Kept so the old path still compiles while
+    /// the router path rolls out — nil means "route through commandRouter".
     let onSend: (String) -> Void
     let onVoice: (() -> Void)?
     let onClose: () -> Void
@@ -13,27 +15,71 @@ struct ChatView: View {
     /// is AgentChatPipeline, nil for the Gemini ChatPipeline (no confirmations).
     var onApproveConfirmation: (() -> Void)? = nil
     var onRejectConfirmation: (() -> Void)? = nil
+    /// β.11 optional wiring — when present, ChatView uses the new ChatCommandBar
+    /// + router. When nil, falls back to the old legacy header + input bar.
+    var commandRouter: ChatCommandRouter? = nil
+    var availableModes: [Mode] = []
+    var shortcutLookup: (Mode) -> String? = { _ in nil }
+    /// Optional external trigger for starting/stopping voice recording when
+    /// the user picks a `.voice` mode. Wired to RecordingPipeline in AppDelegate.
+    var onToggleVoiceRecord: (() -> Void)? = nil
+    var isVoiceRecording: Bool = false
+    /// Optional hint-row dependencies. When all are present, `ChatHintRow` is
+    /// rendered below the command bar; any missing piece hides the row.
+    var permissionsManager: PermissionsManager? = nil
+    var hasGeminiKey: Bool = false
+    var hasAnthropicKey: Bool = false
+    var onOpenSettings: (() -> Void)? = nil
 
     @State private var inputText = ""
+    @State private var selectedMode: Mode = BuiltInModes.chat
     @FocusState private var inputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            chatHeader
+            if commandRouter != nil {
+                ChatCommandBar(
+                    chatSession: chatSession,
+                    selectedMode: $selectedMode,
+                    availableModes: availableModes,
+                    shortcutLookup: shortcutLookup,
+                    onSubmit: { text in
+                        Task { await commandRouter?.run(mode: selectedMode, input: text) }
+                    },
+                    onNewChat: { selectedMode = BuiltInModes.chat },
+                    onClose: onClose,
+                    onPin: onPin,
+                    isPinned: isPinned,
+                    isRecording: isVoiceRecording,
+                    onToggleRecord: onToggleVoiceRecord
+                )
+                if let permissionsManager, let onOpenSettings {
+                    ChatHintRow(
+                        mode: selectedMode,
+                        permissions: permissionsManager,
+                        hasGeminiKey: hasGeminiKey,
+                        hasAnthropicKey: hasAnthropicKey,
+                        onOpenSettings: onOpenSettings
+                    )
+                }
+            } else {
+                chatHeader
+            }
             Divider().background(JarvisTheme.hairline)
             messagesArea
             if let pending = chatSession.pendingConfirmation {
                 confirmationCard(pending)
             }
-            Divider().background(JarvisTheme.hairline)
-            inputBar
+            if commandRouter == nil {
+                Divider().background(JarvisTheme.hairline)
+                inputBar
+            }
         }
         .frame(
             minWidth: Constants.ChatHUD.minWidth,
             minHeight: Constants.ChatHUD.minHeight
         )
         .onAppear {
-            // Small delay so the panel has finished becoming key before we grab focus.
             DispatchQueue.main.async { inputFocused = true }
         }
     }
@@ -211,31 +257,73 @@ struct ChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            // The stylised amber star that appears in Claude's empty state
+        VStack(spacing: 18) {
             Image(systemName: "sparkle")
                 .font(.system(size: 28, weight: .regular))
                 .foregroundStyle(JarvisTheme.accent)
                 .shadow(color: JarvisTheme.accent.opacity(0.4), radius: 6)
-                .padding(.top, 40)
-            Text("Hvad kan jeg hjælpe dig med?")
-                .font(.system(size: 16, weight: .medium))
+                .padding(.top, 30)
+            Text("Hvordan kan jeg hjælpe?")
+                .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(JarvisTheme.textPrimary)
-            Text("Skriv en besked, eller tryk mic for at tale")
-                .font(.system(size: 12))
-                .foregroundStyle(JarvisTheme.textMuted)
 
-            // Suggestion chips — tapping one pre-fills the input
-            VStack(spacing: 6) {
-                chip("Opsummer et dokument for mig")
-                chip("Hvad sker der i nyhederne i dag?")
-                chip("Hjælp mig med at skrive en mail")
+            if commandRouter != nil, !availableModes.isEmpty {
+                modeQuickStartGrid
+            } else {
+                VStack(spacing: 6) {
+                    chip("Opsummer et dokument for mig")
+                    chip("Hvad sker der i nyhederne i dag?")
+                    chip("Hjælp mig med at skrive en mail")
+                }
+                .padding(.top, 6)
             }
-            .padding(.top, 6)
         }
-        .padding(.vertical, 30)
+        .padding(.vertical, 24)
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity)
+    }
+
+    private var modeQuickStartGrid: some View {
+        // Show up to 6 modes in a 3-column grid — gives a glanceable
+        // starting point matching the Claude desktop empty state.
+        let columns = [GridItem(.flexible(), spacing: 10),
+                       GridItem(.flexible(), spacing: 10),
+                       GridItem(.flexible(), spacing: 10)]
+        let modes = Array(availableModes.prefix(6))
+        return LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(modes, id: \.id) { mode in
+                Button {
+                    selectedMode = mode
+                } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: mode.icon)
+                            .font(.system(size: 18))
+                            .foregroundStyle(JarvisTheme.accent)
+                        Text(mode.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(JarvisTheme.textPrimary)
+                        if let shortcut = shortcutLookup(mode) {
+                            Text(shortcut)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(JarvisTheme.textMuted)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(JarvisTheme.surfaceElevated)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(JarvisTheme.hairline, lineWidth: 0.5)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
     }
 
     private func chip(_ text: String) -> some View {
