@@ -3,7 +3,7 @@ import AVFoundation
 enum Constants {
     // MARK: - App
     static let appName = "Jarvis"
-    static let appVersion = "5.0.0-alpha.3"
+    static let appVersion = "5.0.0-alpha.4"
     static let bundleID = "pavi.Jarvis"
 
     // MARK: - Spacing scale (use these instead of magic numbers)
@@ -101,7 +101,7 @@ enum Constants {
         static let chatFrameW = "chatFrameW"
         static let chatFrameH = "chatFrameH"
         static let wakeWordEnabled = "wakeWordEnabled"
-        static let hudStyle = "hudStyle"
+        static let voiceCommandsEnabled = "voiceCommandsEnabled"
         static let claudeDailyLimitTokens = "claudeDailyLimitTokens"
         static let claudeWeeklyLimitTokens = "claudeWeeklyLimitTokens"
     }
@@ -115,22 +115,6 @@ enum Constants {
         static let defaultWeeklyLimit = 5_000_000
     }
 
-    // MARK: - Notch HUD dimensions
-    enum NotchHUD {
-        /// Width for recording / processing — matches Apple's Dynamic Island-style layout
-        /// on MacBooks where the pill extends roughly 3× the notch width.
-        static let expandedWidth: CGFloat = 640
-        /// Height during recording / processing.
-        static let compactHeight: CGFloat = 150
-        /// Height when showing a result block with wrapped text.
-        static let resultHeight: CGFloat = 230
-        /// Bottom-corner radius — tall + pronounced so it reads as an extension of the notch.
-        static let cornerRadius: CGFloat = 32
-        /// How many points we push the pill above the physical notch bottom to hide the seam.
-        static let notchOverlap: CGFloat = 4
-        /// Width of the left visualisation column (arc reactor + oscilloscope).
-        static let visualColumnWidth: CGFloat = 84
-    }
 
     // MARK: - Gemini Models
     enum GeminiModelName {

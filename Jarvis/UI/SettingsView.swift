@@ -306,25 +306,12 @@ struct SettingsAPIKeysPane: View {
 
 struct SettingsHUDPane: View {
     @AppStorage("ttsEnabled") private var ttsEnabled = false
-    @AppStorage(Constants.Defaults.hudStyle) private var hudStyleRaw: String = HUDStylePreference.auto.rawValue
 
     var body: some View {
         SettingsPane(
             title: "HUD",
             subtitle: "Udseendet på Jarvis' svar- og optagelsespanel."
         ) {
-            SettingsCard(
-                title: "Stil",
-                footer: "Auto vælger notch på MacBooks med notch, ellers hjørnestilen øverst til højre."
-            ) {
-                Picker("HUD-stil", selection: $hudStyleRaw) {
-                    ForEach(HUDStylePreference.allCases) { style in
-                        Text(style.displayName).tag(style.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
             SettingsCard(title: "Tale") {
                 Toggle("Læs HUD-svar op (Text-to-Speech)", isOn: $ttsEnabled)
                 Text("Når aktiveret læser Jarvis Q&A- og Vision-svar op med systemets stemmesyntese.")
@@ -539,6 +526,7 @@ struct SettingsLocationPane: View {
 
 struct SettingsVoicePane: View {
     @AppStorage(Constants.Defaults.wakeWordEnabled) private var wakeWordEnabled = false
+    @AppStorage(Constants.Defaults.voiceCommandsEnabled) private var voiceCommandsEnabled = false
     @State private var porcupineKey = ""
     @State private var wakeWordStatus: String?
     private let keychainService = KeychainService()
@@ -546,11 +534,23 @@ struct SettingsVoicePane: View {
     var body: some View {
         SettingsPane(
             title: "Stemme",
-            subtitle: "Wake word og andre stemme-indstillinger. Mikrofonen på push-to-talk justeres via Systemindstillinger."
+            subtitle: "Jarvis kan lytte kontinuerligt efter kommandoer uden at du skal trykke en hotkey."
         ) {
             SettingsCard(
-                title: "Wake word",
-                footer: "Lyden behandles on-device via Picovoice Porcupine. Intet forlader din Mac før wakewordet fyrer."
+                title: "Voice commands",
+                footer: "Kør on-device via Apples speech-recognizer. Sig fx \"Jarvis info\", \"Jarvis update\", \"Jarvis chat\", \"Jarvis oversæt\" for at starte den respektive mode."
+            ) {
+                Toggle("Lyt efter \"Jarvis …\" kommandoer", isOn: $voiceCommandsEnabled)
+                    .onChange(of: voiceCommandsEnabled) { _, _ in
+                        NotificationCenter.default.post(name: .jarvisVoiceCommandSettingsChanged, object: nil)
+                    }
+                Text("Genkendte kommandoer: **info**, **update**, **chat**, **spørg**, **oversæt**, **opsummer**.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            SettingsCard(
+                title: "Wake word (Porcupine)",
+                footer: "Lavere strømforbrug end voice commands ovenfor, men mindre fleksibelt — \"Jarvis\" alene starter bare Q&A. Aktiveres fuldt i β med SPM-pakken."
             ) {
                 Toggle("Aktivér 'Jarvis' wake word", isOn: $wakeWordEnabled)
                     .onChange(of: wakeWordEnabled) { _, _ in

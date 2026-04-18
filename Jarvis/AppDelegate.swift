@@ -30,6 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var wakeWordDetector: WakeWordDetecting = PorcupineWakeWordDetector(
         accessKeyProvider: { [weak keychainService] in keychainService?.getPorcupineKey() }
     )
+    let voiceCommandService = VoiceCommandService()
     let locationService = LocationService()
     lazy var updatesService = UpdatesService(locationService: locationService)
     lazy var infoModeService = InfoModeService(locationService: locationService)
@@ -59,6 +60,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyBindings.applyAll()
             setupCostWarning()
             setupWakeWord()
+            setupVoiceCommands()
             checkFirstLaunch()
             LoggingService.shared.log("Jarvis v\(Constants.appVersion) started")
         }
@@ -424,6 +426,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             startWakeWord()
         } else {
             wakeWordDetector.stop()
+        }
+    }
+
+    // MARK: - Voice commands (continuous on-device "Jarvis ..." listener)
+
+    private func setupVoiceCommands() {
+        voiceCommandService.onCommand = { [weak self] command in
+            guard let self else { return }
+            switch command {
+            case .info:
+                if !self.hudController.isInfoModeVisible { self.hudController.showInfoMode() }
+            case .uptodate:
+                if !self.hudController.isUptodateVisible { self.hudController.showUptodate() }
+            case .chat:
+                if !self.hudController.isChatVisible { self.hudController.showChat() }
+            case .qna:
+                self.pipeline.handleRecordStart(mode: BuiltInModes.qna, captureScreen: false)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(4))
+                    self?.pipeline.handleRecordStop()
+                }
+            case .translate:
+                self.pipeline.handleRecordStart(mode: BuiltInModes.translate, captureScreen: false)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(4))
+                    self?.pipeline.handleRecordStop()
+                }
+            case .summarize:
+                self.summaryService.summarizeInteractively()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .jarvisVoiceCommandSettingsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshVoiceCommands()
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            await self.voiceCommandService.prepare()
+            self.refreshVoiceCommands()
+        }
+    }
+
+    private func refreshVoiceCommands() {
+        let enabled = UserDefaults.standard.bool(forKey: Constants.Defaults.voiceCommandsEnabled)
+        if enabled {
+            voiceCommandService.start()
+        } else {
+            voiceCommandService.stop()
         }
     }
 

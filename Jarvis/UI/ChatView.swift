@@ -97,7 +97,7 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            ArcReactorView(progress: 0, size: 52, levelMonitor: nil)
+            HALEyeView(progress: 0, size: 72, levelMonitor: nil)
                 .padding(.bottom, 4)
             Text("Start en samtale med Jarvis")
                 .font(.subheadline)

@@ -96,16 +96,16 @@ struct HUDContentView: View {
                 modeBadge
                 Spacer()
                 Label(formatTime(remaining), systemImage: "timer")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.85))
+                    .font(.halTerminal(size: 11, weight: .medium))
+                    .foregroundStyle(JarvisTheme.halBrass.opacity(0.9))
             }
 
-            ArcReactorView(
+            HALEyeView(
                 progress: min(elapsed / Constants.maxRecordingDuration, 1.0),
-                size: 88,
+                size: 130,
                 levelMonitor: audioLevel
             )
-            .padding(.top, 2)
+            .padding(.top, 4)
 
             // Live transcription — only shown once there's something to show so the
             // HUD doesn't display an empty placeholder line on every press.
@@ -132,8 +132,13 @@ struct HUDContentView: View {
                     .transition(.opacity.combined(with: .scale))
             }
 
-            WaveformScope(buffer: waveform, height: 36)
+            // Big, prominent oscilloscope strip — the voice *is* the visual here.
+            WaveformScope(buffer: waveform, height: 56)
                 .padding(.horizontal, 2)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(JarvisTheme.halRed.opacity(0.25), lineWidth: 0.5)
+                )
         }
         .animation(.easeInOut(duration: 0.25), value: audioLevel.isSilent)
         .animation(.easeInOut(duration: 0.2), value: speechService.transcript.isEmpty)
@@ -141,19 +146,22 @@ struct HUDContentView: View {
 
     private var modeBadge: some View {
         HStack(spacing: 4) {
-            Image(systemName: "waveform")
-                .font(.caption2)
-            Text(activeModeName.isEmpty ? "Jarvis" : activeModeName)
-                .font(.system(.caption, design: .rounded).weight(.semibold))
+            Circle()
+                .fill(JarvisTheme.halRed)
+                .frame(width: 6, height: 6)
+                .shadow(color: JarvisTheme.halRed.opacity(0.7), radius: 2)
+            Text((activeModeName.isEmpty ? "JARVIS" : activeModeName).uppercased())
+                .font(.halTerminal(size: 10, weight: .semibold))
+                .tracking(1.2)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .background {
             Capsule()
-                .fill(JarvisTheme.neonCyan.opacity(0.15))
-                .overlay(Capsule().stroke(JarvisTheme.neonCyan.opacity(0.6), lineWidth: 0.75))
+                .fill(Color.black.opacity(0.6))
+                .overlay(Capsule().stroke(JarvisTheme.halBrass.opacity(0.55), lineWidth: 0.75))
         }
-        .foregroundStyle(JarvisTheme.brightCyan)
+        .foregroundStyle(JarvisTheme.halFlare)
     }
 
     // MARK: - Processing
@@ -165,8 +173,8 @@ struct HUDContentView: View {
                 Text("Behandler...").font(.headline).foregroundStyle(JarvisTheme.brightCyan)
                 Spacer()
             }
-            ArcReactorView(progress: 0, size: 72, levelMonitor: nil)
-                .padding(.vertical, 4)
+            HALEyeView(progress: 0, size: 90, levelMonitor: nil)
+                .padding(.vertical, 6)
             // Show the last transcription so the user can verify what was sent.
             if !speechService.transcript.isEmpty {
                 Text("\u{201E}\(speechService.transcript)\u{201C}")

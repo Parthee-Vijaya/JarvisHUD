@@ -1,89 +1,60 @@
 import AVFoundation
 
+/// Records microphone audio to WAV. v5.0.0-alpha.4 onward this no longer owns
+/// its own AVAudioEngine — it subscribes to `SharedAudioEngine` so the live
+/// speech-recognition service and the WAV writer consume one microphone in one
+/// tap, which cuts start-up latency and eliminates mic-contention glitches.
+@MainActor
 class AudioCaptureManager {
-    private var audioEngine: AVAudioEngine?
     private var audioData = Data()
     private var isRecording = false
+    private var subscriberToken: UUID?
     private var bufferWarningLogged = false
     private static let bufferWarnThresholdBytes = 10 * 1_024 * 1_024  // 10 MB
 
     var onRecordingStarted: (() -> Void)?
     var onRecordingStopped: ((Data) -> Void)?
 
-    /// Optional live audio-level sink — set by whoever owns the mic (usually AppDelegate
-    /// wires this to `HUDWindowController`'s level monitor). RMS gets normalised and
-    /// thrown at the monitor from the tap thread; the monitor smooths internally.
+    /// Live audio-level sink, wired to the HUD's pulse indicator.
     weak var levelMonitor: AudioLevelMonitor?
 
-    /// Optional rolling waveform sink for the HUD oscilloscope. Receives one peak
-    /// value per tap buffer (~20 Hz at the 4096-frame buffer size we use).
+    /// Rolling oscilloscope buffer, wired to the waveform strip in the HUD.
     weak var waveformBuffer: WaveformBuffer?
 
     func startRecording() throws {
         guard !isRecording else { return }
+        let engine = SharedAudioEngine.shared
+        try engine.start()
 
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
-
-        guard format.sampleRate > 0 else {
+        guard let format = engine.inputFormat, format.sampleRate > 0 else {
             throw JarvisError.audioFormatInvalid
         }
 
         audioData = Data()
         bufferWarningLogged = false
-        audioData.append(createWAVHeader(dataSize: 0, sampleRate: format.sampleRate, channels: UInt16(format.channelCount)))
+        audioData.append(createWAVHeader(
+            dataSize: 0,
+            sampleRate: format.sampleRate,
+            channels: UInt16(format.channelCount)
+        ))
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            guard let self else { return }
-            let channelData = buffer.floatChannelData?[0]
-            let frameCount = Int(buffer.frameLength)
-
-            var sumOfSquares: Float = 0
-            var peak: Float = 0
-            for i in 0..<frameCount {
-                let sample = max(-1.0, min(1.0, channelData?[i] ?? 0))
-                sumOfSquares += sample * sample
-                if abs(sample) > abs(peak) { peak = sample }
-                var intSample = Int16(sample * Float(Int16.max))
-                self.audioData.append(Data(bytes: &intSample, count: 2))
-            }
-
-            // Feed the live HUD waveform. RMS is typically 0.0–0.3 for normal speech;
-            // boost 3× so a calm voice still pushes the bars well above idle.
-            if frameCount > 0 {
-                let rms = sqrt(sumOfSquares / Float(frameCount))
-                let boosted = min(1.0, Double(rms) * 3.0)
-                let oscPeak = max(-1.0, min(1.0, peak * 2.5))  // boost for visibility
-                let monitor = self.levelMonitor
-                let waveform = self.waveformBuffer
-                DispatchQueue.main.async {
-                    monitor?.submit(rms: boosted)
-                    waveform?.push(peak: oscPeak)
-                }
-            }
-
-            // One-shot warning when the buffer crosses 10 MB — mostly a canary for
-            // misconfigured sample rates or unreasonable max-duration bumps.
-            if !self.bufferWarningLogged && self.audioData.count > Self.bufferWarnThresholdBytes {
-                self.bufferWarningLogged = true
-                LoggingService.shared.log("Audio buffer exceeded \(Self.bufferWarnThresholdBytes / 1_048_576) MB — approaching max duration", level: .warning)
-            }
+        // Subscribe — the closure runs on the audio render thread. Keep work light.
+        subscriberToken = engine.addSubscriber { [weak self] buffer in
+            self?.consume(buffer)
         }
 
-        try engine.start()
-        audioEngine = engine
         isRecording = true
         onRecordingStarted?()
-        LoggingService.shared.log("Audio recording started")
+        LoggingService.shared.log("Audio recording started (shared engine)")
     }
 
     func stopRecording() -> Data {
-        guard isRecording, let engine = audioEngine else { return Data() }
+        guard isRecording else { return Data() }
 
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        audioEngine = nil
+        if let token = subscriberToken {
+            SharedAudioEngine.shared.removeSubscriber(token)
+            subscriberToken = nil
+        }
         isRecording = false
         levelMonitor?.reset()
         waveformBuffer?.reset()
@@ -98,6 +69,44 @@ class AudioCaptureManager {
         onRecordingStopped?(result)
         return result
     }
+
+    // MARK: - Buffer consumer (audio thread)
+
+    nonisolated private func consume(_ buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData?[0] else { return }
+        let frameCount = Int(buffer.frameLength)
+
+        var sumOfSquares: Float = 0
+        var peak: Float = 0
+        var pcm = Data(capacity: frameCount * 2)
+        for i in 0..<frameCount {
+            let raw = channelData[i]
+            let sample = max(-1.0, min(1.0, raw))
+            sumOfSquares += sample * sample
+            if abs(sample) > abs(peak) { peak = sample }
+            var intSample = Int16(sample * Float(Int16.max))
+            pcm.append(Data(bytes: &intSample, count: 2))
+        }
+
+        let rms = frameCount > 0 ? sqrt(sumOfSquares / Float(frameCount)) : 0
+        let boostedRMS = min(1.0, Double(rms) * 3.0)
+        let oscPeak = max(-1.0, min(1.0, peak * 2.5))
+
+        // Bounce the WAV append + metering to main actor for state-isolation safety.
+        Task { @MainActor [weak self] in
+            guard let self, self.isRecording else { return }
+            self.audioData.append(pcm)
+            self.levelMonitor?.submit(rms: boostedRMS)
+            self.waveformBuffer?.push(peak: oscPeak)
+
+            if !self.bufferWarningLogged && self.audioData.count > Self.bufferWarnThresholdBytes {
+                self.bufferWarningLogged = true
+                LoggingService.shared.log("Audio buffer exceeded \(Self.bufferWarnThresholdBytes / 1_048_576) MB — approaching max duration", level: .warning)
+            }
+        }
+    }
+
+    // MARK: - WAV header helpers
 
     private func createWAVHeader(dataSize: UInt32, sampleRate: Double, channels: UInt16) -> Data {
         var header = Data()
@@ -130,7 +139,6 @@ class AudioCaptureManager {
         header.append(contentsOf: "data".utf8)
         var ds = dataSize
         header.append(Data(bytes: &ds, count: 4))
-
         return header
     }
 

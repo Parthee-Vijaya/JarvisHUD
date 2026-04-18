@@ -117,9 +117,6 @@ class HUDWindowController {
     func close() {
         cancelAutoClose()
         cancelRecordingTimer()
-        notchPhaseObserver?.cancel()
-        notchPhaseObserver = nil
-        notchMetrics = nil
         panel?.close()
         panel = nil
         hudState.isVisible = false
@@ -129,25 +126,8 @@ class HUDWindowController {
 
     private func presentPanel() {
         cancelAutoClose()
-
-        if panel != nil {
-            // Panel already visible — just update content (state is @Observable)
-            return
-        }
-
-        // Honour the user's hudStyle preference. `auto` picks notch when the screen has one.
-        let stylePref = HUDStylePreference(rawValue: UserDefaults.standard.string(forKey: Constants.Defaults.hudStyle) ?? "") ?? .auto
-        switch stylePref.resolved() {
-        case .notch:
-            if let metrics = NotchDetector.currentMetrics() {
-                presentNotchPanel(metrics: metrics)
-                return
-            }
-            // Fall through to corner if the user forced notch but has no notched screen.
-            fallthrough
-        case .corner:
-            presentCornerPanel()
-        }
+        if panel != nil { return }   // already visible — @Observable state updates in place
+        presentCornerPanel()
     }
 
     private func presentCornerPanel() {
@@ -191,82 +171,6 @@ class HUDWindowController {
         panel.orderFrontRegardless()
         self.panel = panel
         hudState.isVisible = true
-    }
-
-    private func presentNotchPanel(metrics: NotchDetector.NotchMetrics) {
-        let contentView = NotchHUDContentView(
-            state: hudState,
-            audioLevel: audioLevel,
-            waveform: waveform,
-            speechService: speechService,
-            activeModeName: activeModeName,
-            onClose: { [weak self] in self?.close() },
-            onSpeak: { [weak self] text in self?.onSpeakRequested?(text) },
-            onPermissionAction: { [weak self] in self?.onPermissionAction?() }
-        )
-
-        let hostingController = NSHostingController(rootView: contentView)
-
-        let panel = NSPanel(contentViewController: hostingController)
-        panel.styleMask = [.borderless, .nonactivatingPanel]
-        panel.level = NSWindow.Level(Int(CGWindowLevelForKey(.statusWindow)) + 1)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.isMovableByWindowBackground = false
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.ignoresMouseEvents = false
-
-        self.panel = panel
-        self.notchMetrics = metrics
-        applyNotchFrame(for: hudState.currentPhase, animate: false)
-
-        panel.orderFrontRegardless()
-        hudState.isVisible = true
-
-        // Re-size the pill whenever the phase flips (recording → processing → result).
-        // Captures a weak self and watches the observable HUDState for phase equality change.
-        observeNotchPhaseChanges()
-    }
-
-    /// Weak-held metrics + phase observer so `applyNotchFrame` can react to phase
-    /// changes after the panel is created.
-    private var notchMetrics: NotchDetector.NotchMetrics?
-    private var notchPhaseObserver: Task<Void, Never>?
-
-    private func observeNotchPhaseChanges() {
-        notchPhaseObserver?.cancel()
-        notchPhaseObserver = Task { @MainActor [weak self] in
-            guard let self else { return }
-            var lastPhase = self.hudState.currentPhase
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(80))
-                guard !Task.isCancelled else { return }
-                let current = self.hudState.currentPhase
-                if current != lastPhase {
-                    self.applyNotchFrame(for: current, animate: true)
-                    lastPhase = current
-                }
-                if self.panel == nil { return }
-            }
-        }
-    }
-
-    private func applyNotchFrame(for phase: HUDState.Phase, animate: Bool) {
-        guard let panel, let metrics = notchMetrics else { return }
-        let w = Constants.NotchHUD.expandedWidth
-        let h: CGFloat
-        switch phase {
-        case .result, .error, .permissionError:
-            h = Constants.NotchHUD.resultHeight
-        default:
-            h = Constants.NotchHUD.compactHeight
-        }
-        let topY = metrics.notchBottomY + Constants.NotchHUD.notchOverlap
-        let x = metrics.notchCenterX - w / 2
-        let y = topY - h
-        panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true, animate: animate)
     }
 
     // MARK: - Chat Panel

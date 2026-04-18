@@ -26,11 +26,6 @@ struct JarvisHUDBackground: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(JarvisTheme.borderGradient, lineWidth: 1)
             }
-            .overlay {
-                if showReticle {
-                    HUDReticleOverlay(cornerRadius: cornerRadius)
-                }
-            }
             .shadow(color: JarvisTheme.neonCyan.opacity(0.35), radius: 16, y: 0)
             .shadow(color: .black.opacity(0.55), radius: Constants.HUD.outerShadowRadius, y: Constants.HUD.outerShadowY)
     }
