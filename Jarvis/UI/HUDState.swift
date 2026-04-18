@@ -11,6 +11,7 @@ class HUDState {
         case error(message: String)
         case permissionError(permission: String, instructions: String)
         case chat
+        case uptodate
 
         static func == (lhs: Phase, rhs: Phase) -> Bool {
             switch (lhs, rhs) {
@@ -22,6 +23,7 @@ class HUDState {
             case (.permissionError(let p1, let i1), .permissionError(let p2, let i2)):
                 return p1 == p2 && i1 == i2
             case (.chat, .chat): return true
+            case (.uptodate, .uptodate): return true
             default: return false
             }
         }

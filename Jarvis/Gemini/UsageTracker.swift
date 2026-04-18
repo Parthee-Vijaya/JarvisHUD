@@ -25,7 +25,8 @@ class UsageTracker {
     }
 
     private let storageURL: URL
-    private var costWarningFired = false
+    private var lastWarnedThresholdUSD: Double = 0
+    private static let warningThresholdsUSD: [Double] = [1.0, 5.0, 10.0, 25.0, 50.0, 100.0]
 
     init() {
         let appSupport = FileManager.default.homeDirectoryForCurrentUser
@@ -60,18 +61,22 @@ class UsageTracker {
     }
 
     private func checkCostWarning() {
-        guard !costWarningFired,
-              currentUsage.totalCostUSD >= Constants.costWarningThresholdUSD else { return }
-        costWarningFired = true
-        LoggingService.shared.log("Cost warning: monthly usage reached $\(String(format: "%.2f", currentUsage.totalCostUSD))", level: .warning)
-        onCostWarning?(currentUsage.totalCostUSD)
+        // Fire the warning once per tier crossed — $1, $5, $10, $25, $50, $100.
+        // Lower threshold (Constants.costWarningThresholdUSD) is the floor; ignore tiers below it.
+        let cost = currentUsage.totalCostUSD
+        guard let nextTier = Self.warningThresholdsUSD.first(where: {
+            $0 >= Constants.costWarningThresholdUSD && cost >= $0 && lastWarnedThresholdUSD < $0
+        }) else { return }
+        lastWarnedThresholdUSD = nextTier
+        LoggingService.shared.log("Cost warning: monthly usage reached $\(String(format: "%.2f", cost)) (tier $\(nextTier))", level: .warning)
+        onCostWarning?(cost)
     }
 
     private func checkMonthReset() {
         let now = Self.currentMonth()
         if currentUsage.month != now {
             currentUsage = MonthlyUsage(month: now)
-            costWarningFired = false
+            lastWarnedThresholdUSD = 0
             saveUsage()
             LoggingService.shared.log("Usage tracker reset for new month: \(now)")
         }

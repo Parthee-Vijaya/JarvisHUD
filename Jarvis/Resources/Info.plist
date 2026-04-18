@@ -8,5 +8,9 @@
     <string>Jarvis needs microphone access to record your voice for dictation and AI commands.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Jarvis needs screen capture access for Vision mode to analyze what's on your screen.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Jarvis uses on-device speech recognition to show a live preview of what you're saying in the HUD. No audio leaves your Mac for this preview.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Jarvis uses your location to show weather for your area in Uptodate mode. You can also set a city manually in Settings if you prefer.</string>
 </dict>
 </plist>

@@ -2,6 +2,10 @@ import SwiftUI
 
 struct HUDContentView: View {
     let state: HUDState
+    let audioLevel: AudioLevelMonitor
+    let waveform: WaveformBuffer
+    let speechService: SpeechRecognitionService
+    let activeModeName: String
     let onClose: () -> Void
     var onSpeak: ((String) -> Void)?
     var onPermissionAction: (() -> Void)?
@@ -11,22 +15,32 @@ struct HUDContentView: View {
     var onPin: (() -> Void)?
 
     @State private var appeared = false
-    @State private var waveformPhases: [Bool] = Array(repeating: false, count: Constants.Animation.waveformBarCount)
+
+    private var isChat: Bool {
+        if case .chat = state.currentPhase { return true }
+        return false
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            phaseContent
+        Group {
+            if isChat {
+                phaseContent
+                    .frame(
+                        minWidth: Constants.ChatHUD.minWidth,
+                        maxWidth: .infinity,
+                        minHeight: Constants.ChatHUD.minHeight,
+                        maxHeight: .infinity
+                    )
+                    .jarvisHUDBackground(showReticle: false)
+            } else {
+                VStack(spacing: 0) {
+                    phaseContent
+                }
+                .padding(Constants.HUD.padding)
+                .frame(width: Constants.HUD.width)
+                .jarvisHUDBackground()
+            }
         }
-        .padding(Constants.HUD.padding)
-        .frame(width: Constants.HUD.width)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: Constants.HUD.cornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Constants.HUD.cornerRadius, style: .continuous)
-                .stroke(.white.opacity(Constants.HUD.borderOpacity), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.3), radius: Constants.HUD.outerShadowRadius, y: Constants.HUD.outerShadowY)
-        .shadow(color: .black.opacity(0.1), radius: Constants.HUD.innerShadowRadius, y: Constants.HUD.innerShadowY)
         .scaleEffect(appeared ? 1 : Constants.Animation.appearScaleFrom)
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : Constants.Animation.appearOffsetFrom)
@@ -36,8 +50,6 @@ struct HUDContentView: View {
             }
         }
     }
-
-    // MARK: - Phase Content
 
     @ViewBuilder
     private var phaseContent: some View {
@@ -65,61 +77,103 @@ struct HUDContentView: View {
                     isPinned: state.isPinned
                 )
             }
+        case .uptodate:
+            // Uptodate gets its own dedicated panel in HUDWindowController; this case
+            // exists only for phase-switch completeness.
+            EmptyView()
         }
     }
 
     // MARK: - Recording
 
     private func recordingView(elapsed: TimeInterval) -> some View {
-        VStack(spacing: 12) {
-            HStack {
-                headerIcon("waveform.circle.fill", color: .red)
-                Text("Optager...").font(.headline)
+        let remaining = max(0, Constants.maxRecordingDuration - elapsed)
+
+        return VStack(spacing: 10) {
+            // Top status row: mode badge + remaining countdown
+            HStack(spacing: 8) {
+                modeBadge
                 Spacer()
-                Text(formatTime(elapsed))
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                Label(formatTime(remaining), systemImage: "timer")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.85))
             }
 
-            HStack(spacing: 6) {
-                ForEach(0..<Constants.Animation.waveformBarCount, id: \.self) { index in
-                    WaveformBar(isAnimating: waveformPhases[index])
-                        .onAppear {
-                            let delay = Double(index) * 0.1
-                            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                                waveformPhases[index] = true
-                            }
-                        }
-                }
-            }
-            .frame(height: Constants.Animation.waveformBarMaxHeight)
+            ArcReactorView(
+                progress: min(elapsed / Constants.maxRecordingDuration, 1.0),
+                size: 88,
+                levelMonitor: audioLevel
+            )
+            .padding(.top, 2)
 
-            // Countdown ring
-            ZStack {
-                Circle()
-                    .stroke(.quaternary, lineWidth: 3)
-                Circle()
-                    .trim(from: 0, to: min(elapsed / Constants.maxRecordingDuration, 1.0))
-                    .stroke(.red, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.linear(duration: 1), value: elapsed)
+            // Live transcription — only shown once there's something to show so the
+            // HUD doesn't display an empty placeholder line on every press.
+            if !speechService.transcript.isEmpty {
+                Text(speechService.transcript)
+                    .font(.callout)
+                    .foregroundStyle(.white.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity)
+                    .transition(.opacity)
+            } else {
+                Text("Lytter…")
+                    .font(.callout)
+                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.45))
             }
-            .frame(width: 32, height: 32)
+
+            // Silence hint — fades in/out when the mic has been quiet >2 s
+            if audioLevel.isSilent {
+                Label("Slip for at sende", systemImage: "hand.tap.fill")
+                    .font(.caption)
+                    .foregroundStyle(JarvisTheme.brightCyan)
+                    .shadow(color: JarvisTheme.brightCyan.opacity(0.7), radius: 4)
+                    .transition(.opacity.combined(with: .scale))
+            }
+
+            WaveformScope(buffer: waveform, height: 36)
+                .padding(.horizontal, 2)
         }
+        .animation(.easeInOut(duration: 0.25), value: audioLevel.isSilent)
+        .animation(.easeInOut(duration: 0.2), value: speechService.transcript.isEmpty)
+    }
+
+    private var modeBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "waveform")
+                .font(.caption2)
+            Text(activeModeName.isEmpty ? "Jarvis" : activeModeName)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background {
+            Capsule()
+                .fill(JarvisTheme.neonCyan.opacity(0.15))
+                .overlay(Capsule().stroke(JarvisTheme.neonCyan.opacity(0.6), lineWidth: 0.75))
+        }
+        .foregroundStyle(JarvisTheme.brightCyan)
     }
 
     // MARK: - Processing
 
     private var processingView: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             HStack {
-                headerIcon("gear.circle.fill", color: .orange)
-                Text("Behandler...").font(.headline)
+                headerIcon("cpu", color: JarvisTheme.warningGlow)
+                Text("Behandler...").font(.headline).foregroundStyle(JarvisTheme.brightCyan)
                 Spacer()
             }
-            ProgressView()
-                .controlSize(.regular)
-                .padding(.vertical, 8)
+            ArcReactorView(progress: 0, size: 72, levelMonitor: nil)
+                .padding(.vertical, 4)
+            // Show the last transcription so the user can verify what was sent.
+            if !speechService.transcript.isEmpty {
+                Text("\u{201E}\(speechService.transcript)\u{201C}")
+                    .font(.caption)
+                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.7))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
         }
     }
 
@@ -128,28 +182,26 @@ struct HUDContentView: View {
     private func resultView(text: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                headerIcon("waveform.circle.fill", color: .accentColor)
-                Text("Jarvis").font(.headline)
+                headerIcon("waveform.circle.fill", color: JarvisTheme.neonCyan)
+                Text("Jarvis")
+                    .font(.headline)
+                    .foregroundStyle(JarvisTheme.brightCyan)
                 Spacer()
-                Button(action: { onPin?() }) {
-                    Image(systemName: state.isPinned ? "pin.fill" : "pin")
-                        .foregroundStyle(state.isPinned ? Color.accentColor : Color.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help(state.isPinned ? "Unpin" : "Pin")
-                Button(action: { onSpeak?(text) }) {
-                    Image(systemName: "speaker.wave.2.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Læs op")
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
+                hudControlButton(system: state.isPinned ? "pin.fill" : "pin",
+                                 tint: state.isPinned ? JarvisTheme.neonCyan : JarvisTheme.neonCyan.opacity(0.55),
+                                 help: state.isPinned ? "Unpin" : "Pin") { onPin?() }
+                hudControlButton(system: "speaker.wave.2.fill",
+                                 tint: JarvisTheme.neonCyan.opacity(0.7),
+                                 help: "Læs op") { onSpeak?(text) }
+                hudControlButton(system: "xmark.circle.fill",
+                                 tint: JarvisTheme.neonCyan.opacity(0.55),
+                                 help: "Luk", action: onClose)
             }
-            Divider()
+            Rectangle()
+                .fill(JarvisTheme.neonCyan.opacity(0.25))
+                .frame(height: 1)
             ScrollView {
-                MarkdownTextView(text)
+                MarkdownTextView(text, foregroundColor: .white.opacity(0.95))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 200)
@@ -162,9 +214,11 @@ struct HUDContentView: View {
         HStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.title2)
-                .foregroundStyle(.green)
+                .foregroundStyle(JarvisTheme.successGlow)
+                .shadow(color: JarvisTheme.brightCyan.opacity(0.6), radius: 4)
             Text(message)
                 .font(.body)
+                .foregroundStyle(.white.opacity(0.95))
             Spacer()
         }
     }
@@ -176,17 +230,17 @@ struct HUDContentView: View {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.title2)
-                    .foregroundStyle(.yellow)
-                Text("Fejl").font(.headline)
+                    .foregroundStyle(JarvisTheme.criticalGlow)
+                    .shadow(color: JarvisTheme.criticalGlow.opacity(0.5), radius: 4)
+                Text("Fejl").font(.headline).foregroundStyle(JarvisTheme.criticalGlow)
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
+                hudControlButton(system: "xmark.circle.fill",
+                                 tint: JarvisTheme.neonCyan.opacity(0.5),
+                                 help: "Luk", action: onClose)
             }
             Text(message)
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.8))
         }
     }
 
@@ -197,20 +251,21 @@ struct HUDContentView: View {
             HStack {
                 Image(systemName: "lock.shield.fill")
                     .font(.title2)
-                    .foregroundStyle(.orange)
-                Text("\(permission) kræves").font(.headline)
+                    .foregroundStyle(JarvisTheme.warningGlow)
+                    .shadow(color: JarvisTheme.warningGlow.opacity(0.5), radius: 4)
+                Text("\(permission) kræves").font(.headline).foregroundStyle(JarvisTheme.brightCyan)
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
+                hudControlButton(system: "xmark.circle.fill",
+                                 tint: JarvisTheme.neonCyan.opacity(0.5),
+                                 help: "Luk", action: onClose)
             }
             Text(instructions)
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.8))
             if let action = onPermissionAction {
                 Button("Åbn Indstillinger") { action() }
                     .buttonStyle(.borderedProminent)
+                    .tint(JarvisTheme.neonCyan)
                     .controlSize(.small)
             }
         }
@@ -222,6 +277,15 @@ struct HUDContentView: View {
         Image(systemName: name)
             .foregroundStyle(color)
             .font(.title3)
+            .shadow(color: color.opacity(0.6), radius: 3)
+    }
+
+    private func hudControlButton(system: String, tint: Color, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system).foregroundStyle(tint)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
     }
 
     private func formatTime(_ time: TimeInterval) -> String {
@@ -229,28 +293,5 @@ struct HUDContentView: View {
         let minutes = seconds / 60
         let secs = seconds % 60
         return String(format: "%d:%02d", minutes, secs)
-    }
-}
-
-// MARK: - Waveform Bar
-
-private struct WaveformBar: View {
-    let isAnimating: Bool
-    @State private var height: CGFloat = 4
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 2)
-            .fill(.red)
-            .frame(width: Constants.Animation.waveformBarWidth, height: height)
-            .onAppear {
-                guard isAnimating else { return }
-                withAnimation(
-                    .easeInOut(duration: Constants.Animation.waveformAnimationDuration)
-                    .repeatForever(autoreverses: true)
-                    .delay(Double.random(in: 0...0.2))
-                ) {
-                    height = CGFloat.random(in: 8...Constants.Animation.waveformBarMaxHeight)
-                }
-            }
     }
 }

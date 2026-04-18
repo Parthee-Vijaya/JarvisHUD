@@ -46,30 +46,185 @@ class GeminiClient {
     }
 
     func sendAudio(_ audioData: Data, mode: Mode) async -> Result<String, Error> {
-        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
-
-        guard let model = makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
-            return .failure(JarvisError.noAPIKey)
+        // Web-search modes: Gemini's google_search tool reliably fires on TEXT input,
+        // not raw audio. So we do it in two steps — transcribe → grounded answer.
+        if mode.webSearch {
+            return await withRetry { [weak self] in
+                guard let self else { throw JarvisError.noAPIKey }
+                let question = try await self.transcribe(audioData: audioData, preferredModel: mode.model)
+                return try await self.sendTextWithSearch(prompt: question, imageData: nil, mode: mode)
+            }
         }
 
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
         let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
-        return await withRetry {
-            try await self.executeGeneration(model: model, parts: [audioPart], mode: mode)
+        // Rebuild the model inside each retry attempt so a Keychain rotation picks up immediately.
+        return await withRetry { [weak self] in
+            guard let self else { throw JarvisError.noAPIKey }
+            guard let model = self.makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
+                throw JarvisError.noAPIKey
+            }
+            return try await self.executeGeneration(model: model, parts: [audioPart], mode: mode)
         }
     }
 
     func sendAudioWithImage(_ audioData: Data, imageData: Data, mode: Mode) async -> Result<String, Error> {
-        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
-
-        guard let model = makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
-            return .failure(JarvisError.noAPIKey)
+        if mode.webSearch {
+            return await withRetry { [weak self] in
+                guard let self else { throw JarvisError.noAPIKey }
+                let question = try await self.transcribe(audioData: audioData, preferredModel: mode.model)
+                return try await self.sendTextWithSearch(prompt: question, imageData: imageData, mode: mode)
+            }
         }
 
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
         let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
         let imagePart = ModelContent.Part.data(mimetype: "image/png", imageData)
-        return await withRetry {
-            try await self.executeGeneration(model: model, parts: [audioPart, imagePart], mode: mode)
+        return await withRetry { [weak self] in
+            guard let self else { throw JarvisError.noAPIKey }
+            guard let model = self.makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
+                throw JarvisError.noAPIKey
+            }
+            return try await self.executeGeneration(model: model, parts: [audioPart, imagePart], mode: mode)
         }
+    }
+
+    // MARK: - Plain text (one-shot, no chat)
+
+    /// One-shot text generation with optional web-search grounding. Used by the
+    /// summarize flow and anywhere else we just need "prompt in → answer out".
+    func sendText(prompt: String, mode: Mode) async -> Result<String, Error> {
+        if mode.webSearch {
+            return await withRetry { [weak self] in
+                guard let self else { throw JarvisError.noAPIKey }
+                return try await self.sendTextWithSearch(prompt: prompt, imageData: nil, mode: mode)
+            }
+        }
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
+        let textPart = ModelContent.Part.text(prompt)
+        return await withRetry { [weak self] in
+            guard let self else { throw JarvisError.noAPIKey }
+            guard let model = self.makeModel(modelName: modelName, systemPrompt: mode.systemPrompt) else {
+                throw JarvisError.noAPIKey
+            }
+            return try await self.executeGeneration(model: model, parts: [textPart], mode: mode)
+        }
+    }
+
+    // MARK: - Audio → text transcription (pre-search step)
+
+    /// Plain transcription with no system prompt, used before a grounded search call.
+    /// Keeps search prompt space for the actual question + tool.
+    private func transcribe(audioData: Data, preferredModel: GeminiModel) async throws -> String {
+        let transcribePrompt = """
+        Transcribe the user's audio into plain text. Return ONLY the transcribed question, \
+        no commentary. Preserve the original language.
+        """
+        guard let model = makeModel(modelName: Constants.GeminiModelName.flash, systemPrompt: transcribePrompt) else {
+            throw JarvisError.noAPIKey
+        }
+        let audioPart = ModelContent.Part.data(mimetype: "audio/wav", audioData)
+        let tempMode = Mode(id: UUID(), name: "_transcribe", systemPrompt: transcribePrompt,
+                            model: .flash, outputType: .hud, maxTokens: 1024, isBuiltIn: false)
+        let text = try await executeGeneration(model: model, parts: [audioPart], mode: tempMode)
+        LoggingService.shared.log("Transcribed question: \(text.prefix(120))")
+        return text
+    }
+
+    // MARK: - REST path with Google Search grounding
+
+    /// Direct REST call to Gemini with `tools: [{googleSearch: {}}]`. Used after the
+    /// audio has been transcribed — search reliably fires on text, not raw audio.
+    /// All JSON keys use camelCase to match Gemini REST doc exactly.
+    private func sendTextWithSearch(prompt: String, imageData: Data?, mode: Mode) async throws -> String {
+        guard let apiKey = keychainService.getAPIKey() else {
+            throw JarvisError.noAPIKey
+        }
+        let modelName = mode.model == .pro ? Constants.GeminiModelName.pro : Constants.GeminiModelName.flash
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):generateContent")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 45
+
+        var parts: [[String: Any]] = [["text": prompt]]
+        if let imageData {
+            parts.append([
+                "inlineData": [
+                    "mimeType": "image/png",
+                    "data": imageData.base64EncodedString()
+                ]
+            ])
+        }
+
+        let body: [String: Any] = [
+            "systemInstruction": ["parts": [["text": mode.systemPrompt]]],
+            "contents": [["role": "user", "parts": parts]],
+            "tools": [["googleSearch": [:] as [String: Any]]],
+            "generationConfig": [
+                "maxOutputTokens": mode.maxTokens
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        LoggingService.shared.log("Gemini REST+search POST: model=\(modelName), promptChars=\(prompt.count), image=\(imageData != nil)")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw JarvisError.emptyResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            LoggingService.shared.log("Gemini REST \(http.statusCode): \(body.prefix(800))", level: .error)
+            throw NSError(domain: NSURLErrorDomain, code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "Gemini REST \(http.statusCode)"])
+        }
+
+        let cleaned = try parseRESTResponse(data: data, mode: mode)
+        LoggingService.shared.log("Gemini REST+search response received (\(cleaned.count) chars)")
+        return cleaned
+    }
+
+    /// Parse the JSON response, pull out the text, track usage, and log grounding metadata.
+    private func parseRESTResponse(data: Data, mode: Mode) throws -> String {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw JarvisError.emptyResponse
+        }
+
+        // Usage metadata
+        if let usage = root["usageMetadata"] as? [String: Any] {
+            let input = (usage["promptTokenCount"] as? Int) ?? 0
+            let output = (usage["candidatesTokenCount"] as? Int) ?? 0
+            usageTracker.trackUsage(model: mode.model, inputTokens: input, outputTokens: output)
+        }
+
+        let candidates = (root["candidates"] as? [[String: Any]]) ?? []
+        guard let candidate = candidates.first,
+              let content = candidate["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]] else {
+            throw JarvisError.emptyResponse
+        }
+
+        // Concatenate all text parts. Non-text parts (e.g. thought signatures) are ignored.
+        let text = parts.compactMap { $0["text"] as? String }.joined()
+        guard !text.isEmpty else { throw JarvisError.emptyResponse }
+
+        // Grounding metadata — log source domains so we can verify searches happened.
+        if let grounding = candidate["groundingMetadata"] as? [String: Any] {
+            let chunks = (grounding["groundingChunks"] as? [[String: Any]]) ?? []
+            let domains = chunks.compactMap { chunk -> String? in
+                guard let web = chunk["web"] as? [String: Any] else { return nil }
+                if let title = web["title"] as? String { return title }
+                if let uri = web["uri"] as? String, let host = URL(string: uri)?.host { return host }
+                return nil
+            }
+            if !domains.isEmpty {
+                LoggingService.shared.log("Gemini grounded on: \(domains.prefix(5).joined(separator: ", "))")
+            }
+        }
+
+        return postProcess(text)
     }
 
     // MARK: - Chat & Streaming

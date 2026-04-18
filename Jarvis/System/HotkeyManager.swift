@@ -2,57 +2,93 @@ import AppKit
 import Carbon
 import HotKey
 
-class HotkeyManager {
-    private var dictationHotKey: HotKey?
-    private var qnaHotKey: HotKey?
-    private var visionHotKey: HotKey?
-    private var modeCycleHotKey: HotKey?
-    private var chatToggleHotKey: HotKey?
-    private var translateHotKey: HotKey?
+/// Registers global hotkeys via `soffes/HotKey` and forwards key-down/up events to
+/// action-specific callbacks. As of v4.0 bindings are dynamic: the owner calls
+/// `register(bindings:)` once at startup and `rebind(action:to:)` whenever the
+/// user changes a shortcut in Settings.
+final class HotkeyManager {
+    // One HotKey instance per action (recreated on rebind).
+    private var hotKeys: [HotkeyAction: HotKey] = [:]
+    private var currentBindings: [HotkeyAction: HotkeyBinding] = [:]
 
+    // Action callbacks wired by AppDelegate.
     var onDictationKeyDown: (() -> Void)?
     var onDictationKeyUp: (() -> Void)?
     var onQnAKeyDown: (() -> Void)?
     var onQnAKeyUp: (() -> Void)?
     var onVisionKeyDown: (() -> Void)?
     var onVisionKeyUp: (() -> Void)?
-    var onModeCycle: (() -> Void)?
-    var onChatToggle: (() -> Void)?
     var onTranslateKeyDown: (() -> Void)?
     var onTranslateKeyUp: (() -> Void)?
+    var onModeCycle: (() -> Void)?
+    var onChatToggle: (() -> Void)?
+    var onUptodate: (() -> Void)?
+    var onSummarize: (() -> Void)?
 
-    func registerHotkeys() {
-        dictationHotKey = HotKey(key: .space, modifiers: [.option])
-        dictationHotKey?.keyDownHandler = { [weak self] in self?.onDictationKeyDown?() }
-        dictationHotKey?.keyUpHandler = { [weak self] in self?.onDictationKeyUp?() }
+    /// Install all bindings. Call once at app start after loading from `HotkeyStore`.
+    func register(bindings: [HotkeyAction: HotkeyBinding]) {
+        unregisterAll()
+        currentBindings = bindings
+        for action in HotkeyAction.allCases {
+            guard let binding = bindings[action] else { continue }
+            install(binding)
+        }
+        LoggingService.shared.log("Hotkeys registered (\(hotKeys.count) bindings active)")
+        if let dictation = bindings[.dictation], dictation.keyCode == Key.space.carbonKeyCode,
+           dictation.modifiers == .option {
+            LoggingService.shared.log("Note: ⌥Space is Spotlight's default shortcut — remap in Settings → Hotkeys if it conflicts.", level: .info)
+        }
+    }
 
-        qnaHotKey = HotKey(key: .q, modifiers: [.option])
-        qnaHotKey?.keyDownHandler = { [weak self] in self?.onQnAKeyDown?() }
-        qnaHotKey?.keyUpHandler = { [weak self] in self?.onQnAKeyUp?() }
-
-        visionHotKey = HotKey(key: .space, modifiers: [.option, .shift])
-        visionHotKey?.keyDownHandler = { [weak self] in self?.onVisionKeyDown?() }
-        visionHotKey?.keyUpHandler = { [weak self] in self?.onVisionKeyUp?() }
-
-        modeCycleHotKey = HotKey(key: .m, modifiers: [.option])
-        modeCycleHotKey?.keyDownHandler = { [weak self] in self?.onModeCycle?() }
-
-        chatToggleHotKey = HotKey(key: .c, modifiers: [.option])
-        chatToggleHotKey?.keyDownHandler = { [weak self] in self?.onChatToggle?() }
-
-        translateHotKey = HotKey(key: .t, modifiers: [.option])
-        translateHotKey?.keyDownHandler = { [weak self] in self?.onTranslateKeyDown?() }
-        translateHotKey?.keyUpHandler = { [weak self] in self?.onTranslateKeyUp?() }
-
-        LoggingService.shared.log("Hotkeys registered")
+    /// Replace one binding in-place. Store persistence is the caller's responsibility.
+    func rebind(action: HotkeyAction, to binding: HotkeyBinding) {
+        // Tear down existing HotKey for this action (deinit unregisters).
+        hotKeys[action] = nil
+        currentBindings[action] = binding
+        install(binding)
+        LoggingService.shared.log("Hotkey rebound: \(action.rawValue) → \(binding.displayString)")
     }
 
     func unregisterAll() {
-        dictationHotKey = nil
-        qnaHotKey = nil
-        visionHotKey = nil
-        modeCycleHotKey = nil
-        chatToggleHotKey = nil
-        translateHotKey = nil
+        hotKeys.removeAll()
+        currentBindings.removeAll()
+    }
+
+    // MARK: - Private
+
+    private func install(_ binding: HotkeyBinding) {
+        guard let key = binding.hotkeyKey else {
+            LoggingService.shared.log("Unknown key code \(binding.keyCode) for \(binding.action.rawValue) — skipping", level: .warning)
+            return
+        }
+
+        let hotKey = HotKey(key: key, modifiers: binding.modifiers)
+        wireHandlers(for: binding.action, on: hotKey)
+        hotKeys[binding.action] = hotKey
+    }
+
+    private func wireHandlers(for action: HotkeyAction, on hotKey: HotKey) {
+        switch action {
+        case .dictation:
+            hotKey.keyDownHandler = { [weak self] in self?.onDictationKeyDown?() }
+            hotKey.keyUpHandler   = { [weak self] in self?.onDictationKeyUp?() }
+        case .qna:
+            hotKey.keyDownHandler = { [weak self] in self?.onQnAKeyDown?() }
+            hotKey.keyUpHandler   = { [weak self] in self?.onQnAKeyUp?() }
+        case .vision:
+            hotKey.keyDownHandler = { [weak self] in self?.onVisionKeyDown?() }
+            hotKey.keyUpHandler   = { [weak self] in self?.onVisionKeyUp?() }
+        case .translate:
+            hotKey.keyDownHandler = { [weak self] in self?.onTranslateKeyDown?() }
+            hotKey.keyUpHandler   = { [weak self] in self?.onTranslateKeyUp?() }
+        case .cycleMode:
+            hotKey.keyDownHandler = { [weak self] in self?.onModeCycle?() }
+        case .toggleChat:
+            hotKey.keyDownHandler = { [weak self] in self?.onChatToggle?() }
+        case .uptodate:
+            hotKey.keyDownHandler = { [weak self] in self?.onUptodate?() }
+        case .summarize:
+            hotKey.keyDownHandler = { [weak self] in self?.onSummarize?() }
+        }
     }
 }

@@ -5,7 +5,7 @@ APP_NAME="Jarvis"
 SCHEME="Jarvis"
 PROJECT="Jarvis.xcodeproj"
 BUILD_DIR="build"
-DMG_NAME="Jarvis-3.0.dmg"
+DMG_NAME="Jarvis-4.1.dmg"
 
 echo "=== Building $APP_NAME ==="
 
@@ -19,8 +19,8 @@ xcodebuild -project "$PROJECT" \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGNING_ALLOWED=NO
 
-# Find the built .app
-APP_PATH=$(find "$BUILD_DIR" -name "$APP_NAME.app" -type d | head -1)
+# Find the built .app (exclude dmg-staging leftovers from previous runs)
+APP_PATH=$(find "$BUILD_DIR" -name "$APP_NAME.app" -type d -not -path "*/dmg-staging/*" | head -1)
 
 if [ -z "$APP_PATH" ]; then
     echo "ERROR: Could not find $APP_NAME.app in build directory"

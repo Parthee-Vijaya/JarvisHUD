@@ -1,0 +1,7 @@
+import Foundation
+
+extension Notification.Name {
+    /// Fired when the user toggles the wake-word setting or saves a new AccessKey.
+    /// AppDelegate listens and restarts (or stops) the detector accordingly.
+    static let jarvisWakeWordSettingsChanged = Notification.Name("jarvisWakeWordSettingsChanged")
+}

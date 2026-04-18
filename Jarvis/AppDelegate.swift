@@ -7,6 +7,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenu: NSMenu!
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
+    private let settingsHostState = SettingsHostState()
 
     // Menu items updated in-place
     private var modeMenuItem: NSMenuItem?
@@ -16,14 +17,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Public (accessed by JarvisApp)
     let modeManager = ModeManager()
     let usageTracker = UsageTracker()
+    lazy var hotkeyBindings = HotkeyBindings(store: hotkeyStore, manager: hotkeyManager)
 
     // MARK: - Services
     private let keychainService = KeychainService()
     private let hotkeyManager = HotkeyManager()
+    private let hotkeyStore = HotkeyStore()
     private let hudController = HUDWindowController()
     private var pipeline: RecordingPipeline!
     let chatSession = ChatSession()
     private var chatPipeline: ChatPipeline!
+    private lazy var wakeWordDetector: WakeWordDetecting = PorcupineWakeWordDetector(
+        accessKeyProvider: { [weak keychainService] in keychainService?.getPorcupineKey() }
+    )
+    let locationService = LocationService()
+    lazy var updatesService = UpdatesService(locationService: locationService)
+    private lazy var summaryService = DocumentSummaryService(
+        geminiClient: geminiClient,
+        hudController: hudController
+    )
 
     // Supporting services (owned here, injected into pipeline)
     private let audioCapture = AudioCaptureManager()
@@ -41,7 +53,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setupChatPipeline()
             setupMenuBar()
             setupHotkeys()
+            hotkeyBindings.applyAll()
             setupCostWarning()
+            setupWakeWord()
             checkFirstLaunch()
             LoggingService.shared.log("Jarvis v\(Constants.appVersion) started")
         }
@@ -50,6 +64,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Pipeline Setup
 
     private func setupPipeline() {
+        // Wire the mic tap's RMS + peak samples into the HUD's live visualisers.
+        audioCapture.levelMonitor = hudController.audioLevel
+        audioCapture.waveformBuffer = hudController.waveform
+
+        // Ask for on-device speech-recognition auth up front so the first ⌥Q
+        // isn't interrupted by a permission prompt.
+        Task { await hudController.speechService.requestAuthorization() }
+
+        // Wire the Uptodate panel's data source.
+        hudController.updatesService = updatesService
+
         pipeline = RecordingPipeline(
             audioCapture: audioCapture,
             geminiClient: geminiClient,
@@ -86,6 +111,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.hudController.hudState.isPinned.toggle()
         }
+    }
+
+    /// Called by `SettingsView` after the user saves a new API key so the chat pipeline
+    /// drops its cached SDK Chat (which was constructed with the old key).
+    func resetChatPipelineForKeyRotation() {
+        chatPipeline?.reset()
+        LoggingService.shared.log("Chat pipeline reset after API key rotation")
     }
 
     // MARK: - Menu Bar
@@ -127,6 +159,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenu.addItem(usageItem)
 
         statusMenu.addItem(NSMenuItem.separator())
+
+        let hotkeysItem = NSMenuItem(title: "Hotkeys…", action: #selector(openHotkeysSettings), keyEquivalent: "")
+        hotkeysItem.target = self
+        statusMenu.addItem(hotkeysItem)
 
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
@@ -173,15 +209,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
+        presentSettings(tab: nil)
+    }
+
+    @objc private func openHotkeysSettings() {
+        presentSettings(tab: .hotkeys)
+    }
+
+    private func presentSettings(tab: SettingsTab?) {
+        if let tab { settingsHostState.selectedTab = tab }
         if settingsWindow == nil {
-            let settingsView = SettingsView()
+            let settingsView = SettingsHost(state: settingsHostState)
                 .environment(modeManager)
                 .environment(usageTracker)
+                .environment(hotkeyBindings)
             let hostingController = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: hostingController)
             window.title = "Jarvis Settings"
             window.styleMask = [.titled, .closable, .resizable]
-            window.setContentSize(NSSize(width: 500, height: 450))
+            window.setContentSize(NSSize(width: 520, height: 500))
             window.center()
             settingsWindow = window
         }
@@ -255,7 +301,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.pipeline.handleRecordStop()
         }
 
-        hotkeyManager.registerHotkeys()
+        hotkeyManager.onUptodate = { [weak self] in
+            guard let self else { return }
+            if self.hudController.isUptodateVisible {
+                self.hudController.close()
+            } else {
+                self.hudController.showUptodate()
+            }
+        }
+
+        hotkeyManager.onSummarize = { [weak self] in
+            self?.summaryService.summarizeInteractively()
+        }
+
+        // Registration happens after this, via `hotkeyBindings.applyAll()` in applicationDidFinishLaunching.
     }
 
     // MARK: - Cost Warning
@@ -265,6 +324,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.hudController.showError(
                 "Omkostningsadvarsel: Dit månedlige forbrug har nået $\(String(format: "%.2f", cost))"
             )
+        }
+    }
+
+    // MARK: - Wake Word
+
+    private func setupWakeWord() {
+        NotificationCenter.default.addObserver(
+            forName: .jarvisWakeWordSettingsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshWakeWord()
+        }
+        refreshWakeWord()
+    }
+
+    private func refreshWakeWord() {
+        let enabled = UserDefaults.standard.bool(forKey: Constants.Defaults.wakeWordEnabled)
+        if enabled {
+            startWakeWord()
+        } else {
+            wakeWordDetector.stop()
+        }
+    }
+
+    private func startWakeWord() {
+        // Stop before restart so a key change doesn't leave a dangling mic tap.
+        wakeWordDetector.stop()
+        do {
+            try wakeWordDetector.start { [weak self] in
+                guard let self else { return }
+                // Treat a wake event the same as pressing the Q&A hotkey.
+                self.pipeline.handleRecordStart(mode: BuiltInModes.qna, captureScreen: false)
+                // Auto-stop 4 s later — no release key to trigger stop in wake-word mode.
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(4))
+                    self?.pipeline.handleRecordStop()
+                }
+            }
+        } catch {
+            LoggingService.shared.log("Wake word start failed: \(error.localizedDescription)", level: .warning)
+            hudController.showError(error.localizedDescription)
         }
     }
 

@@ -48,12 +48,14 @@ enum BuiltInModes {
         name: "Q&A",
         systemPrompt: """
         Svar direkte på brugerens spørgsmål. Vær kortfattet. Undgå indledende høfligheder. \
-        Maks 150 ord medmindre spørgsmålet kræver dybde.
+        Maks 150 ord medmindre spørgsmålet kræver dybde. Hvis spørgsmålet kræver aktuel eller \
+        faktuel information, brug Google Search til at finde opdaterede svar og cite kilder kort.
         """,
         model: .flash,
         outputType: .hud,
         maxTokens: 1024,
-        isBuiltIn: true
+        isBuiltIn: true,
+        webSearch: true
     )
 
     static let vision = Mode(
@@ -61,12 +63,14 @@ enum BuiltInModes {
         name: "Vision",
         systemPrompt: """
         Du ser et screenshot af brugerens skærm. Svar konkret på deres spørgsmål baseret på hvad \
-        der er synligt. Hvis de peger på en fejl, forklar hvad der er galt og hvordan det fikses.
+        der er synligt. Hvis de peger på en fejl, forklar hvad der er galt og hvordan det fikses. \
+        Hvis svaret kræver opdateret viden udenfor billedet, brug Google Search.
         """,
         model: .flash,
         outputType: .hud,
         maxTokens: 2048,
-        isBuiltIn: true
+        isBuiltIn: true,
+        webSearch: true
     )
 
     static let chat = Mode(
@@ -97,5 +101,26 @@ enum BuiltInModes {
         isBuiltIn: true
     )
 
-    static let all: [Mode] = [dictation, vibeCode, professional, qna, vision, chat, translate]
+    static let summarize = Mode(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000008")!,
+        name: "Summarize",
+        systemPrompt: """
+        Du modtager indholdet af et dokument. Lav en klar, struktureret opsummering:
+
+        • **TL;DR** — én sætning der fanger essensen.
+        • **Hovedpunkter** — 3–6 bullet points med de vigtigste pointer, konklusioner eller beslutninger.
+        • **Action items** — kun hvis dokumentet indeholder konkrete opgaver, deadlines eller næste skridt.
+        • **Kilder / tal** — hvis dokumentet bygger på specifikke tal eller citater, marker dem kort.
+
+        Svar på samme sprog som dokumentet. Brug markdown. Ingen indledende høfligheder. \
+        Hvis dokumentet er kode eller teknisk, fokuser på arkitektur, API-overflade og kendte \
+        gotchas i stedet for bullet-points.
+        """,
+        model: .flash,
+        outputType: .hud,
+        maxTokens: 2048,
+        isBuiltIn: true
+    )
+
+    static let all: [Mode] = [dictation, vibeCode, professional, qna, vision, chat, translate, summarize]
 }

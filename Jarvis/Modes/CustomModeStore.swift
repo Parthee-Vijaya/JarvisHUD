@@ -11,17 +11,25 @@ class CustomModeStore {
     }
 
     func loadModes() -> [Mode] {
-        guard let data = try? Data(contentsOf: storageURL),
-              let modes = try? JSONDecoder().decode([Mode].self, from: data) else {
+        do {
+            let data = try Data(contentsOf: storageURL)
+            return try JSONDecoder().decode([Mode].self, from: data)
+        } catch CocoaError.fileReadNoSuchFile {
+            return []
+        } catch {
+            LoggingService.shared.log("Failed to load custom modes: \(error)", level: .error)
             return []
         }
-        return modes
     }
 
     func saveModes(_ modes: [Mode]) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
-        guard let data = try? encoder.encode(modes) else { return }
-        try? data.write(to: storageURL)
+        do {
+            let data = try encoder.encode(modes)
+            try data.write(to: storageURL)
+        } catch {
+            LoggingService.shared.log("Failed to save custom modes: \(error)", level: .error)
+        }
     }
 }

@@ -34,10 +34,29 @@ class TextInsertionService {
     }
 
     private func insertViaPasteboard(_ text: String) -> Bool {
+        // Capture the target app BEFORE touching the pasteboard so we can verify
+        // focus hasn't drifted to another app between setString and the ⌘V post.
+        guard let targetApp = NSWorkspace.shared.frontmostApplication else {
+            LoggingService.shared.log("Paste fallback aborted — no frontmost app", level: .warning)
+            return false
+        }
+        let targetPID = targetApp.processIdentifier
+
         let pasteboard = NSPasteboard.general
         let oldContents = pasteboard.string(forType: .string)
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+
+        // Abort paste if the user switched apps between capture and now — would paste into wrong app.
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID {
+            LoggingService.shared.log("Paste fallback aborted — focus moved to another app", level: .warning)
+            // Restore pasteboard immediately since we didn't paste.
+            if let old = oldContents {
+                pasteboard.clearContents()
+                pasteboard.setString(old, forType: .string)
+            }
+            return false
+        }
 
         let source = CGEventSource(stateID: .combinedSessionState)
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
@@ -47,8 +66,11 @@ class TextInsertionService {
         keyUp?.flags = .maskCommand
         keyUp?.post(tap: .cgSessionEventTap)
 
+        // Restore the old pasteboard only if focus is still on the same app — otherwise
+        // the user is now working in a different app and the old string is no longer theirs.
         if let old = oldContents {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else { return }
                 pasteboard.clearContents()
                 pasteboard.setString(old, forType: .string)
             }

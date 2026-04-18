@@ -1,14 +1,26 @@
 import SwiftUI
 
+/// Which Settings tab is frontmost. Exposed so `AppDelegate` can deep-link from
+/// the menu bar "Hotkeys…" item straight to the Hotkeys tab.
+enum SettingsTab: Hashable {
+    case apiKey, modes, hotkeys, history, usage, general
+}
+
 struct SettingsView: View {
     @Environment(ModeManager.self) private var modeManager
     @Environment(UsageTracker.self) private var usageTracker
+    @Environment(HotkeyBindings.self) private var hotkeys
+
+    @Binding var selectedTab: SettingsTab
 
     @State private var apiKey = ""
     @State private var connectionStatus: ConnectionStatus = .unknown
     @State private var isTesting = false
     @State private var showingNewMode = false
     @AppStorage("ttsEnabled") private var ttsEnabled = false
+    @AppStorage(Constants.Defaults.wakeWordEnabled) private var wakeWordEnabled = false
+    @State private var porcupineKey = ""
+    @State private var wakeWordStatus: String?
 
     private let keychainService = KeychainService()
 
@@ -36,22 +48,33 @@ struct SettingsView: View {
     private let conversationStore = ConversationStore()
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             apiKeyTab
                 .tabItem { Label("API Key", systemImage: "key") }
+                .tag(SettingsTab.apiKey)
             modesTab
                 .tabItem { Label("Modes", systemImage: "list.bullet") }
+                .tag(SettingsTab.modes)
+            hotkeysTab
+                .tabItem { Label("Hotkeys", systemImage: "command") }
+                .tag(SettingsTab.hotkeys)
             historyTab
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(SettingsTab.history)
             usageTab
                 .tabItem { Label("Usage", systemImage: "chart.bar") }
+                .tag(SettingsTab.usage)
             generalTab
                 .tabItem { Label("General", systemImage: "gear") }
+                .tag(SettingsTab.general)
         }
-        .frame(width: 500, height: 450)
+        .frame(width: 520, height: 500)
         .onAppear {
             if let existing = keychainService.getAPIKey() {
                 apiKey = existing
+            }
+            if let existing = keychainService.getPorcupineKey() {
+                porcupineKey = existing
             }
         }
     }
@@ -66,8 +89,12 @@ struct SettingsView: View {
                 SecureField("Enter API key...", text: $apiKey)
                     .textFieldStyle(.roundedBorder)
                 Button("Save") {
+                    keychainService.clearCache()
                     if keychainService.saveAPIKey(apiKey) {
-                        LoggingService.shared.log("API key saved to Keychain")
+                        LoggingService.shared.log("API key saved to Keychain (cache invalidated)")
+                        connectionStatus = .unknown
+                        // Drop the cached SDK Chat so the next chat message uses the new key.
+                        (NSApp.delegate as? AppDelegate)?.resetChatPipelineForKeyRotation()
                     }
                 }
                 .disabled(apiKey.isEmpty)
@@ -228,19 +255,114 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Keyboard Shortcuts").fontWeight(.medium)
-                    ShortcutRow(keys: "⌥ Space", description: "Push-to-talk (active mode)")
-                    ShortcutRow(keys: "⌥ Q", description: "Push-to-talk Q&A mode")
-                    ShortcutRow(keys: "⌥ ⇧ Space", description: "Vision mode (screenshot + voice)")
-                    ShortcutRow(keys: "⌥ C", description: "Toggle Chat mode")
-                    ShortcutRow(keys: "⌥ T", description: "Quick Translate (hold to talk)")
-                    ShortcutRow(keys: "⌥ M", description: "Cycle modes")
+                HStack {
+                    Image(systemName: "command").foregroundStyle(.secondary)
+                    Text("Tilpas hotkeys i **Hotkeys**-fanen.").font(.callout)
+                    Spacer()
+                    Button("Gå til Hotkeys") { selectedTab = .hotkeys }
+                        .controlSize(.small)
                 }
             }
+            wakeWordSection
             Spacer()
         }
         .padding()
+    }
+
+    private var wakeWordSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Aktivér 'Jarvis' wake word", isOn: $wakeWordEnabled)
+                    .onChange(of: wakeWordEnabled) { _, _ in
+                        NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
+                    }
+                Text("Sig \"Jarvis\" for at trigge en Q&A i stedet for at holde hotkeyen. Lyd behandles on-device via Picovoice Porcupine — intet forlader din Mac før wakewordet hører dit navn.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    SecureField("Picovoice AccessKey", text: $porcupineKey)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Gem nøgle") {
+                        keychainService.clearCache()
+                        if keychainService.savePorcupineKey(porcupineKey) {
+                            wakeWordStatus = "Gemt."
+                            NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
+                        } else {
+                            wakeWordStatus = "Kunne ikke gemme nøglen."
+                        }
+                    }
+                    .disabled(porcupineKey.isEmpty)
+                }
+                if let status = wakeWordStatus {
+                    Text(status).font(.caption).foregroundStyle(.secondary)
+                }
+                Link("Få en gratis AccessKey på picovoice.ai/console",
+                     destination: URL(string: "https://picovoice.ai/console/")!)
+                    .font(.caption)
+            }
+        }
+    }
+
+    // MARK: - Hotkeys
+
+    @State private var hotkeyErrorMessage: String?
+    @State private var hotkeyErrorAction: HotkeyAction?
+
+    private var hotkeysTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Hotkeys").font(.headline)
+                Spacer()
+                Button("Nulstil til standard") { hotkeys.resetAll() }
+                    .controlSize(.small)
+            }
+            Text("Klik på en felt og tryk en tastkombination. Tryk ⎋ for at annullere.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(HotkeyAction.allCases) { action in
+                        hotkeyRow(for: action)
+                    }
+                }
+            }
+        }
+        .padding()
+    }
+
+    private func hotkeyRow(for action: HotkeyAction) -> some View {
+        let binding = hotkeys.binding(for: action)
+        return GroupBox {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(action.displayName).fontWeight(.medium)
+                    Text(action.isPushToTalk ? "Hold nede for at optage" : "Tryk én gang")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if hotkeyErrorAction == action, let msg = hotkeyErrorMessage {
+                    Text(msg)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: 180, alignment: .trailing)
+                }
+                HotkeyRecorderView(currentBinding: binding) { keyCode, modifiers in
+                    let result = hotkeys.update(action, keyCode: keyCode, modifiers: modifiers)
+                    switch result {
+                    case .valid:
+                        hotkeyErrorAction = nil
+                        hotkeyErrorMessage = nil
+                    case .invalid(let msg):
+                        hotkeyErrorAction = action
+                        hotkeyErrorMessage = msg
+                    }
+                }
+                .frame(width: 130, height: 26)
+            }
+        }
     }
 
     private func testConnection() {

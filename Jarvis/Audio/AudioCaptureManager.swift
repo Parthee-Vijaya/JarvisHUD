@@ -4,9 +4,20 @@ class AudioCaptureManager {
     private var audioEngine: AVAudioEngine?
     private var audioData = Data()
     private var isRecording = false
+    private var bufferWarningLogged = false
+    private static let bufferWarnThresholdBytes = 10 * 1_024 * 1_024  // 10 MB
 
     var onRecordingStarted: (() -> Void)?
     var onRecordingStopped: ((Data) -> Void)?
+
+    /// Optional live audio-level sink — set by whoever owns the mic (usually AppDelegate
+    /// wires this to `HUDWindowController`'s level monitor). RMS gets normalised and
+    /// thrown at the monitor from the tap thread; the monitor smooths internally.
+    weak var levelMonitor: AudioLevelMonitor?
+
+    /// Optional rolling waveform sink for the HUD oscilloscope. Receives one peak
+    /// value per tap buffer (~20 Hz at the 4096-frame buffer size we use).
+    weak var waveformBuffer: WaveformBuffer?
 
     func startRecording() throws {
         guard !isRecording else { return }
@@ -20,6 +31,7 @@ class AudioCaptureManager {
         }
 
         audioData = Data()
+        bufferWarningLogged = false
         audioData.append(createWAVHeader(dataSize: 0, sampleRate: format.sampleRate, channels: UInt16(format.channelCount)))
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
@@ -27,10 +39,35 @@ class AudioCaptureManager {
             let channelData = buffer.floatChannelData?[0]
             let frameCount = Int(buffer.frameLength)
 
+            var sumOfSquares: Float = 0
+            var peak: Float = 0
             for i in 0..<frameCount {
                 let sample = max(-1.0, min(1.0, channelData?[i] ?? 0))
+                sumOfSquares += sample * sample
+                if abs(sample) > abs(peak) { peak = sample }
                 var intSample = Int16(sample * Float(Int16.max))
                 self.audioData.append(Data(bytes: &intSample, count: 2))
+            }
+
+            // Feed the live HUD waveform. RMS is typically 0.0–0.3 for normal speech;
+            // boost 3× so a calm voice still pushes the bars well above idle.
+            if frameCount > 0 {
+                let rms = sqrt(sumOfSquares / Float(frameCount))
+                let boosted = min(1.0, Double(rms) * 3.0)
+                let oscPeak = max(-1.0, min(1.0, peak * 2.5))  // boost for visibility
+                let monitor = self.levelMonitor
+                let waveform = self.waveformBuffer
+                DispatchQueue.main.async {
+                    monitor?.submit(rms: boosted)
+                    waveform?.push(peak: oscPeak)
+                }
+            }
+
+            // One-shot warning when the buffer crosses 10 MB — mostly a canary for
+            // misconfigured sample rates or unreasonable max-duration bumps.
+            if !self.bufferWarningLogged && self.audioData.count > Self.bufferWarnThresholdBytes {
+                self.bufferWarningLogged = true
+                LoggingService.shared.log("Audio buffer exceeded \(Self.bufferWarnThresholdBytes / 1_048_576) MB — approaching max duration", level: .warning)
             }
         }
 
@@ -48,6 +85,8 @@ class AudioCaptureManager {
         engine.stop()
         audioEngine = nil
         isRecording = false
+        levelMonitor?.reset()
+        waveformBuffer?.reset()
 
         let dataSize = UInt32(audioData.count - 44)
         updateWAVHeader(data: &audioData, dataSize: dataSize)

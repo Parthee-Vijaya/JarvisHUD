@@ -34,6 +34,47 @@ struct Mode: Identifiable, Codable, Equatable {
     var outputType: OutputType
     var maxTokens: Int
     var isBuiltIn: Bool
+    /// If true, Gemini runs the `google_search` grounding tool when answering.
+    /// Only honoured on non-paste output types (Q&A, Vision, Chat) — dictation-style
+    /// rewrite modes are better left un-grounded.
+    var webSearch: Bool
+
+    init(
+        id: UUID,
+        name: String,
+        systemPrompt: String,
+        model: GeminiModel,
+        outputType: OutputType,
+        maxTokens: Int,
+        isBuiltIn: Bool,
+        webSearch: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.systemPrompt = systemPrompt
+        self.model = model
+        self.outputType = outputType
+        self.maxTokens = maxTokens
+        self.isBuiltIn = isBuiltIn
+        self.webSearch = webSearch
+    }
+
+    // Custom Codable so older JSON files (v3.0 custom modes without `webSearch`) decode cleanly.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, systemPrompt, model, outputType, maxTokens, isBuiltIn, webSearch
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
+        model = try c.decode(GeminiModel.self, forKey: .model)
+        outputType = try c.decode(OutputType.self, forKey: .outputType)
+        maxTokens = try c.decode(Int.self, forKey: .maxTokens)
+        isBuiltIn = try c.decode(Bool.self, forKey: .isBuiltIn)
+        webSearch = try c.decodeIfPresent(Bool.self, forKey: .webSearch) ?? false
+    }
 
     static func == (lhs: Mode, rhs: Mode) -> Bool {
         lhs.id == rhs.id

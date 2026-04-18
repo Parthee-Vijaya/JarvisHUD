@@ -15,6 +15,8 @@ class RecordingPipeline {
     private var recordingState: RecordingState = .idle
     private var activePipelineMode: Mode?
     private var pendingScreenshot: Data?
+    private var isPreparing = false
+    private var pendingStartTask: Task<Void, Never>?
 
     var onStateChanged: ((RecordingState) -> Void)?
 
@@ -44,7 +46,11 @@ class RecordingPipeline {
     // MARK: - Public API
 
     func handleRecordStart(mode: Mode?, captureScreen: Bool) {
-        guard recordingState == .idle else { return }
+        // Reject re-entry during active record/process/prepare phases.
+        guard recordingState == .idle, !isPreparing else {
+            LoggingService.shared.log("Record start ignored — pipeline busy (state=\(recordingState), preparing=\(isPreparing))", level: .warning)
+            return
+        }
 
         let pipelineMode = mode ?? modeManager.activeMode
         activePipelineMode = pipelineMode
@@ -81,18 +87,31 @@ class RecordingPipeline {
             return
         }
 
+        // Update HUD metadata before presenting — mode badge + clear any stale transcript.
+        hudController.activeModeName = pipelineMode.name
+        hudController.speechService.reset()
+        hudController.speechService.start()
+
         // Always show HUD when hotkey pressed
         hudController.showRecording()
 
         // Capture screenshot for Vision mode before recording starts
         if captureScreen {
-            Task {
+            isPreparing = true
+            pendingStartTask = Task { [weak self] in
+                guard let self else { return }
+                defer {
+                    self.isPreparing = false
+                    self.pendingStartTask = nil
+                }
                 do {
                     let screenshot = try await captureScreenWithFallback()
+                    guard !Task.isCancelled else { return }
                     self.pendingScreenshot = screenshot
                     LoggingService.shared.log("Vision screenshot captured (\(screenshot.count) bytes)")
                     self.startAudioRecording()
                 } catch {
+                    if Task.isCancelled { return }
                     LoggingService.shared.log("Screenshot failed: \(error)", level: .error)
                     self.hudController.showError("Kunne ikke tage screenshot: \(error.localizedDescription)")
                     self.resetPipeline()
@@ -104,9 +123,23 @@ class RecordingPipeline {
     }
 
     func handleRecordStop() {
+        // If user released hotkey before the preparation (screenshot) finished,
+        // cancel the pending start and clean up — treat as a cancellation, not an error.
+        if isPreparing, let task = pendingStartTask {
+            LoggingService.shared.log("Record stop during prepare — cancelling pending start")
+            task.cancel()
+            pendingStartTask = nil
+            isPreparing = false
+            hudController.speechService.stop()
+            hudController.close()
+            resetPipeline()
+            return
+        }
+
         guard recordingState == .recording else { return }
 
         let audioData = audioCapture.stopRecording()
+        hudController.speechService.stop()
         recordingState = .processing
         onStateChanged?(.processing)
 

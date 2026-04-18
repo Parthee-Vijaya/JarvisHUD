@@ -39,20 +39,23 @@ struct ChatView: View {
 
     private var chatHeader: some View {
         HStack {
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .foregroundStyle(.accent)
+            Image(systemName: "waveform.circle.fill")
+                .foregroundStyle(JarvisTheme.neonCyan)
                 .font(.title3)
-            Text("Jarvis Chat").font(.headline)
+                .shadow(color: JarvisTheme.neonCyan.opacity(0.6), radius: 4)
+            Text("Jarvis Chat")
+                .font(.headline)
+                .foregroundStyle(JarvisTheme.brightCyan)
             Spacer()
             Button(action: onPin) {
                 Image(systemName: isPinned ? "pin.fill" : "pin")
-                    .foregroundStyle(isPinned ? .accent : .secondary)
+                    .foregroundStyle(isPinned ? JarvisTheme.neonCyan : JarvisTheme.neonCyan.opacity(0.55))
             }
             .buttonStyle(.borderless)
             .help(isPinned ? "Unpin" : "Pin")
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.55))
             }
             .buttonStyle(.borderless)
         }
@@ -94,15 +97,14 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.system(size: 32))
-                .foregroundStyle(.tertiary)
+            ArcReactorView(progress: 0, size: 52, levelMonitor: nil)
+                .padding(.bottom, 4)
             Text("Start en samtale med Jarvis")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JarvisTheme.brightCyan.opacity(0.9))
             Text("Skriv en besked eller hold mic-knappen")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(JarvisTheme.neonCyan.opacity(0.55))
         }
         .padding(.vertical, 40)
     }
@@ -115,7 +117,7 @@ struct ChatView: View {
                 Button(action: onVoice) {
                     Image(systemName: "mic.fill")
                         .font(.body)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JarvisTheme.neonCyan.opacity(0.75))
                 }
                 .buttonStyle(.borderless)
                 .help("Tal til Jarvis")
@@ -123,13 +125,24 @@ struct ChatView: View {
 
             TextField("Skriv en besked...", text: $inputText)
                 .textFieldStyle(.plain)
+                .foregroundStyle(.white)
                 .focused($inputFocused)
                 .onSubmit { sendMessage() }
 
             Button(action: sendMessage) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(inputText.trimmingCharacters(in: .whitespaces).isEmpty ? Color.secondary : Color.accentColor)
+                    .foregroundStyle(
+                        inputText.trimmingCharacters(in: .whitespaces).isEmpty
+                            ? JarvisTheme.neonCyan.opacity(0.35)
+                            : JarvisTheme.neonCyan
+                    )
+                    .shadow(
+                        color: inputText.trimmingCharacters(in: .whitespaces).isEmpty
+                            ? .clear
+                            : JarvisTheme.neonCyan.opacity(0.6),
+                        radius: 4
+                    )
             }
             .buttonStyle(.borderless)
             .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || chatSession.isStreaming)

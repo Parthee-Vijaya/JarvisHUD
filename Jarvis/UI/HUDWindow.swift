@@ -1,11 +1,19 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 class HUDWindowController {
     private var panel: NSPanel?
     private var autoCloseTask: Task<Void, Never>?
     private var recordingTimerTask: Task<Void, Never>?
     let hudState = HUDState()
+    let audioLevel = AudioLevelMonitor()
+    let waveform = WaveformBuffer()
+    let speechService = SpeechRecognitionService()
+    /// Current mode name shown in the HUD badge. AppDelegate keeps this in sync.
+    var activeModeName: String = ""
+    /// Set by AppDelegate once services exist, then passed into UptodateView.
+    var updatesService: UpdatesService?
 
     var onSpeakRequested: ((String) -> Void)?
     var onCloseRequested: (() -> Void)?
@@ -76,6 +84,21 @@ class HUDWindowController {
         hudState.isVisible && hudState.currentPhase == .chat
     }
 
+    func showUptodate() {
+        cancelRecordingTimer()
+        cancelAutoClose()
+        hudState.currentPhase = .uptodate
+        if panel == nil {
+            presentUptodatePanel()
+        } else {
+            resizePanelForUptodate()
+        }
+    }
+
+    var isUptodateVisible: Bool {
+        hudState.isVisible && hudState.currentPhase == .uptodate
+    }
+
     func close() {
         cancelAutoClose()
         cancelRecordingTimer()
@@ -96,6 +119,10 @@ class HUDWindowController {
 
         let contentView = HUDContentView(
             state: hudState,
+            audioLevel: audioLevel,
+            waveform: waveform,
+            speechService: speechService,
+            activeModeName: activeModeName,
             onClose: { [weak self] in self?.close() },
             onSpeak: { [weak self] text in self?.onSpeakRequested?(text) },
             onPermissionAction: { [weak self] in self?.onPermissionAction?() },
@@ -144,6 +171,10 @@ class HUDWindowController {
 
         let contentView = HUDContentView(
             state: hudState,
+            audioLevel: audioLevel,
+            waveform: waveform,
+            speechService: speechService,
+            activeModeName: activeModeName,
             onClose: { [weak self] in self?.close() },
             onSpeak: { [weak self] text in self?.onSpeakRequested?(text) },
             onPermissionAction: { [weak self] in self?.onPermissionAction?() },
@@ -156,13 +187,13 @@ class HUDWindowController {
         let hostingController = NSHostingController(rootView: contentView)
 
         let panel = NSPanel(contentViewController: hostingController)
-        panel.styleMask = [.titled, .closable, .resizable, .nonactivatingPanel]
+        // Borderless + resizable lets the Jarvis cyan background fill the whole panel
+        // with no competing system titlebar. The ChatView's header carries the X/Pin buttons.
+        panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
+        panel.hasShadow = false  // SwiftUI handles the cyan glow shadow
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -190,14 +221,66 @@ class HUDWindowController {
         hudState.isVisible = true
     }
 
+    // MARK: - Uptodate Panel
+
+    private func presentUptodatePanel() {
+        guard let updatesService else {
+            LoggingService.shared.log("Uptodate panel requested but service not wired", level: .warning)
+            return
+        }
+        cancelAutoClose()
+
+        let view = UptodateView(service: updatesService) { [weak self] in self?.close() }
+            .frame(minWidth: 480, minHeight: 560)
+            .jarvisHUDBackground(showReticle: false)
+
+        let hostingController = NSHostingController(rootView: view)
+
+        let panel = NSPanel(contentViewController: hostingController)
+        panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.isMovableByWindowBackground = true
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.minSize = NSSize(width: 440, height: 480)
+
+        if let screen = NSScreen.main {
+            let screenFrame = screen.visibleFrame
+            let w: CGFloat = 500
+            let h: CGFloat = 620
+            let x = screenFrame.maxX - w - Constants.HUD.padding
+            let y = screenFrame.maxY - h - Constants.HUD.padding
+            panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
+        }
+
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        self.panel = panel
+        hudState.isVisible = true
+    }
+
+    private func resizePanelForUptodate() {
+        guard let panel, let updatesService else { return }
+        let view = UptodateView(service: updatesService) { [weak self] in self?.close() }
+            .frame(minWidth: 480, minHeight: 560)
+            .jarvisHUDBackground(showReticle: false)
+        let host = NSHostingController(rootView: view)
+        panel.contentViewController = host
+        let origin = panel.frame.origin
+        panel.setFrame(NSRect(x: origin.x, y: origin.y, width: 500, height: 620), display: true, animate: true)
+    }
+
     private func resizePanelForChat() {
         guard let panel else { return }
         let w = Constants.ChatHUD.width
         let h = Constants.ChatHUD.height
         let origin = panel.frame.origin
-        panel.styleMask = [.titled, .closable, .resizable, .nonactivatingPanel]
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
+        // Stay borderless — ChatView's own header owns close/pin, so we don't want
+        // a ghost system titlebar reserving space above our cyan background.
+        panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
         panel.minSize = NSSize(width: Constants.ChatHUD.minWidth, height: Constants.ChatHUD.minHeight)
         panel.setFrame(NSRect(x: origin.x, y: origin.y, width: w, height: h), display: true, animate: true)
         panel.makeKey()

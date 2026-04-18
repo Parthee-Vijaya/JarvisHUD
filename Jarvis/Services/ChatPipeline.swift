@@ -67,13 +67,17 @@ class ChatPipeline {
     // MARK: - Streaming Core
 
     private func streamResponse(placeholderID: UUID, text: String) async {
-        // Lazily create SDK chat
+        // Lazily create SDK chat. Re-create each time the cached chat is nil (e.g. API key rotation)
+        // so a freshly-saved Keychain key is picked up without an app relaunch.
         if sdkChat == nil {
             if let (_, chat) = geminiClient.startChat(mode: mode, history: chatSession.toModelHistory().dropLast(1).map { $0 }) {
                 sdkChat = chat
             } else {
-                chatSession.updateAssistant(id: placeholderID, text: "Fejl: Ingen API-nøgle fundet.")
+                chatSession.updateAssistant(id: placeholderID, text: "Fejl: Ingen API-nøgle fundet. Tilføj den i Indstillinger.")
                 chatSession.isStreaming = false
+                // Persist the error so it doesn't silently disappear; empty-text filter in
+                // toModelHistory strips it from subsequent API calls.
+                conversationID = conversationStore.saveSession(chatSession, existingID: conversationID)
                 return
             }
         }
