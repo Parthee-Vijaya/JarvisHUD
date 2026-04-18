@@ -541,6 +541,115 @@ struct InfoModeView: View {
                 }
                 .padding(.top, 6)
             }
+
+            if !s.latestSessionTools.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Top tools (seneste session)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(JarvisTheme.neonCyan.opacity(0.7))
+                    HStack(spacing: 6) {
+                        ForEach(s.latestSessionTools) { tool in
+                            HStack(spacing: 3) {
+                                Image(systemName: toolIcon(tool.name))
+                                    .font(.caption2)
+                                Text("\(tool.name)")
+                                    .font(.caption2)
+                                Text("\(tool.count)")
+                                    .font(.caption2.weight(.semibold).monospaced())
+                                    .foregroundStyle(JarvisTheme.brightCyan)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(JarvisTheme.surfaceBase.opacity(0.6))
+                                    .overlay(Capsule().stroke(JarvisTheme.neonCyan.opacity(0.25), lineWidth: 0.5))
+                            )
+                            .foregroundStyle(.white.opacity(0.85))
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+
+            if !s.modelBreakdown.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Modeller (all-time)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(JarvisTheme.neonCyan.opacity(0.7))
+                    ForEach(s.modelBreakdown.prefix(4)) { m in
+                        HStack(spacing: 6) {
+                            Text(prettyModel(m.name))
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.9))
+                                .frame(width: 80, alignment: .leading)
+                            modelBar(model: m)
+                            Spacer(minLength: 6)
+                            Text(formatTokens(m.tokens))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(JarvisTheme.brightCyan)
+                            Text(String(format: "cache %.0f%%", m.cacheRatio * 100))
+                                .font(.caption2)
+                                .foregroundStyle(JarvisTheme.neonCyan.opacity(0.55))
+                                .frame(width: 60, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+
+            if s.longestSessionMessages > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "stopwatch")
+                        .font(.caption2)
+                        .foregroundStyle(JarvisTheme.neonCyan.opacity(0.7))
+                    Text("Længste session: \(s.longestSessionMessages) beskeder")
+                        .font(.caption2)
+                        .foregroundStyle(JarvisTheme.neonCyan.opacity(0.7))
+                    if let date = s.longestSessionDate {
+                        Text("· \(firstSessionFormatter.string(from: date))")
+                            .font(.caption2)
+                            .foregroundStyle(JarvisTheme.neonCyan.opacity(0.5))
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    /// Compact horizontal bar showing a model's share of total tokens.
+    private func modelBar(model: ClaudeStatsSnapshot.ModelStat) -> some View {
+        let total = service.claudeStats.totalTokens
+        let share = total > 0 ? Double(model.tokens) / Double(total) : 0
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(JarvisTheme.surfaceBase.opacity(0.6))
+                    .frame(height: 5)
+                Capsule()
+                    .fill(JarvisTheme.neonCyan)
+                    .frame(width: geo.size.width * CGFloat(share), height: 5)
+                    .shadow(color: JarvisTheme.neonCyan.opacity(0.5), radius: 2)
+            }
+        }
+        .frame(height: 5)
+        .frame(maxWidth: 120)
+    }
+
+    private func toolIcon(_ name: String) -> String {
+        switch name.lowercased() {
+        case "edit":            return "pencil"
+        case "write":           return "square.and.pencil"
+        case "read":            return "doc.text"
+        case "bash":            return "terminal"
+        case "grep":            return "magnifyingglass"
+        case "glob":            return "doc.on.doc"
+        case "taskcreate",
+             "taskupdate":      return "checklist"
+        case "agent":           return "sparkles"
+        case "toolsearch":      return "rectangle.and.text.magnifyingglass"
+        case "askuserquestion": return "questionmark.bubble"
+        default:                return "wrench.adjustable"
         }
     }
 
