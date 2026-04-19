@@ -1585,11 +1585,15 @@ struct InfoModeView: View {
                     .foregroundStyle(Color.white.opacity(0.6))
                     .frame(width: 10)
             }
-            Text(a.callsign ?? a.registration ?? "?")
+            // Route (origin → destination IATA codes) when known; the
+            // callsign or registration is the fallback while the route
+            // lookup is pending or when adsbdb doesn't know the flight.
+            Text(a.routeLabel)
                 .font(.caption2.weight(.semibold).monospaced())
-                .foregroundStyle(.white)
-                .frame(width: 62, alignment: .leading)
+                .foregroundStyle(a.origin == nil ? Color.white.opacity(0.7) : .white)
+                .frame(width: 80, alignment: .leading)
                 .lineLimit(1)
+                .help(flyRowTooltip(for: a))
             if let fl = a.altitudeFL {
                 Text(fl)
                     .font(.caption2.monospaced())
@@ -1607,6 +1611,19 @@ struct InfoModeView: View {
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(Color.white.opacity(0.55))
         }
+    }
+
+    /// Hover tooltip shows the "noisier" metadata — callsign, aircraft
+    /// type, origin + destination city names — so the compact row itself
+    /// stays scannable.
+    private func flyRowTooltip(for a: Aircraft) -> String {
+        var parts: [String] = []
+        if let sign = a.callsign { parts.append(sign) }
+        if let t = a.aircraftType { parts.append(t) }
+        if let origin = a.origin, let dest = a.destination {
+            parts.append("\(origin.municipality) → \(dest.municipality)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     /// "Himmel" — synlige planeter + ISS current subpoint. Planets come
