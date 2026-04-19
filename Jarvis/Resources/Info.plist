@@ -16,6 +16,8 @@
     <string>Jarvis shows your next calendar event as a tile in the Cockpit panel. Access is read-only.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Jarvis shows your next calendar event as a tile in the Cockpit panel. Access is read-only.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Jarvis shows Bluetooth connectivity and connected devices in the Cockpit Handlinger tile. No data is sent anywhere.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
