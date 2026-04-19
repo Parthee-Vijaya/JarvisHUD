@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5FD9669C2F950EFB004D42EF /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = AA200020300000000000AAAA /* HotKey */; };
+		5FD9678B2F95345C004D42EF /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5FD9678A2F95345C004D42EF /* WhisperKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -43,6 +44,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5FD9678B2F95345C004D42EF /* WhisperKit in Frameworks */,
 				5FD9669C2F950EFB004D42EF /* HotKey in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -57,11 +59,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		5FD967892F95345B004D42EF /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		AA200004300000000000AAAA = {
 			isa = PBXGroup;
 			children = (
 				AA200002300000000000AAAA /* Jarvis */,
 				AA200102300000000000AAAA /* JarvisTests */,
+				5FD967892F95345B004D42EF /* Frameworks */,
 				AA200005300000000000AAAA /* Products */,
 			);
 			sourceTree = "<group>";
@@ -96,6 +106,7 @@
 			name = Jarvis;
 			packageProductDependencies = (
 				AA200020300000000000AAAA /* HotKey */,
+				5FD9678A2F95345C004D42EF /* WhisperKit */,
 			);
 			productName = Jarvis;
 			productReference = AA200001300000000000AAAA /* Jarvis.app */;
@@ -154,6 +165,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA20001F300000000000AAAA /* XCRemoteSwiftPackageReference "HotKey" */,
+				5FD967882F95320C004D42EF /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA200005300000000000AAAA /* Products */;
@@ -464,6 +476,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		5FD967882F95320C004D42EF /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
 		AA20001F300000000000AAAA /* XCRemoteSwiftPackageReference "HotKey" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/soffes/HotKey";
@@ -475,6 +495,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		5FD9678A2F95345C004D42EF /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5FD967882F95320C004D42EF /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
 		AA200020300000000000AAAA /* HotKey */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = AA20001F300000000000AAAA /* XCRemoteSwiftPackageReference "HotKey" */;
