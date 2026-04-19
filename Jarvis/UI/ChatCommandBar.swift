@@ -32,6 +32,10 @@ struct ChatCommandBar: View {
     @FocusState private var inputFocused: Bool
 
     var body: some View {
+        // v1.4 Fase 2c: Gemini-style pill. Only the minimal controls live
+        // inside the input row: "+", text, "Fast" mode label, mic. Send
+        // happens via Enter. History / pin / close moved to the chat
+        // window's top-right header (see `ChatView.chatTopBar`).
         HStack(spacing: 10) {
             plusMenu
 
@@ -45,31 +49,88 @@ struct ChatCommandBar: View {
 
             Spacer(minLength: 8)
 
+            modeLabel
             micButton
-            modePicker
-            sendButton
-
-            Divider()
-                .frame(height: 18)
-                .background(JarvisTheme.hairline)
-
-            if let onToggleHistory {
-                headerIconButton(
-                    system: "clock.arrow.circlepath",
-                    active: isHistoryOpen,
-                    help: isHistoryOpen ? "Skjul historik" : "Vis historik",
-                    action: onToggleHistory
-                )
-            }
-            headerIconButton(system: isPinned ? "pin.fill" : "pin",
-                             active: isPinned, help: isPinned ? "Unpin" : "Pin",
-                             action: onPin)
-            headerIconButton(system: "xmark", help: "Luk", action: onClose)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            Capsule(style: .continuous)
+                .fill(JarvisTheme.surfaceElevated.opacity(0.4))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(JarvisTheme.hairline, lineWidth: 0.5)
+                )
+        )
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .onAppear {
             DispatchQueue.main.async { inputFocused = true }
+        }
+    }
+
+    // MARK: - Mode label (replaces the pill-chip modePicker)
+
+    /// Compact plain-text mode indicator — matches Gemini's "Fast" label.
+    /// Click opens the same menu as the old pill-chip so power users can
+    /// still switch modes without leaving the command bar.
+    private var modeLabel: some View {
+        Menu {
+            Button {
+                commandText = ""
+                chatSession.clear()
+                onNewChat()
+            } label: {
+                Label("Ny samtale", systemImage: "plus.circle")
+            }
+
+            Divider()
+
+            ForEach(availableModes, id: \.id) { mode in
+                Button {
+                    selectedMode = mode
+                    inputFocused = true
+                    if mode.inputKind == .document {
+                        performSubmit()
+                    }
+                } label: {
+                    HStack {
+                        Label(mode.name, systemImage: mode.icon)
+                        if let shortcut = shortcutLookup(mode) {
+                            Spacer()
+                            Text(shortcut)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(JarvisTheme.textMuted)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Text(modeShortLabel)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(JarvisTheme.textSecondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Aktuel tilstand: \(selectedMode.name). Tryk for at skifte.")
+    }
+
+    /// Short display name for the currently-selected mode. Gemini uses "Fast"
+    /// for its quick model; we map mode names to 1-word labels that fit the
+    /// tight pill. Unmapped modes show their first word.
+    private var modeShortLabel: String {
+        switch selectedMode.name {
+        case "Chat":          return "Chat"
+        case "Q&A":           return "Q&A"
+        case "Vision":        return "Syn"
+        case "Agent":         return "Agent"
+        case "Translate":     return "Oversæt"
+        case "Dictation":     return "Diktat"
+        case "VibeCode":      return "Kode"
+        case "Professional":  return "Pro"
+        case "Summarize":     return "Sum"
+        default:              return selectedMode.name.split(separator: " ").first.map(String.init) ?? selectedMode.name
         }
     }
 

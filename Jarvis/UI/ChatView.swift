@@ -88,6 +88,57 @@ struct ChatView: View {
         .animation(JarvisTheme.springSnappy, value: showHistorySidebar)
     }
 
+    // MARK: - Top bar (window chrome — Gemini reference)
+
+    /// Minimal top-right button cluster: a small screen-capture glyph + a
+    /// minimize chevron + a pin + a history toggle. Kept intentionally short —
+    /// the window's macOS traffic lights cover close, the sidebar has its own
+    /// toggle, and the command bar itself no longer owns any of these.
+    @ViewBuilder
+    private var chatTopBar: some View {
+        HStack(spacing: 6) {
+            Spacer()
+            topIconButton(system: "rectangle.dashed", help: "Skærmbillede + spørg") {
+                selectedMode = BuiltInModes.vision
+                Task { await commandRouter?.run(mode: BuiltInModes.vision, input: "") }
+            }
+            topIconButton(system: "arrow.down.forward.and.arrow.up.backward", help: "Minimer") {
+                onClose()
+            }
+            if onLoadConversation != nil {
+                topIconButton(system: "clock.arrow.circlepath",
+                              active: showHistorySidebar,
+                              help: showHistorySidebar ? "Skjul historik" : "Vis historik") {
+                    showHistorySidebar.toggle()
+                }
+            }
+            topIconButton(system: isPinned ? "pin.fill" : "pin",
+                          active: isPinned,
+                          help: isPinned ? "Unpin" : "Pin") {
+                onPin()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+    }
+
+    private func topIconButton(system: String, active: Bool = false, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(active ? JarvisTheme.accent : JarvisTheme.textSecondary)
+                .frame(width: 24, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(JarvisTheme.surfaceElevated.opacity(0.55))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
     /// v1.4 Fase 2c: deep-black → navy gradient behind the chat, matching the
     /// Gemini desktop reference. Sits on top of the HUD's `.regularMaterial`
     /// so the chat window reads a touch more "at night" than the corner HUD,
@@ -107,7 +158,24 @@ struct ChatView: View {
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
+            // Top-right chrome row — thin, just the two pin-style buttons
+            // from the Gemini reference. Close lives on the window's traffic
+            // lights; no full-width header anymore.
+            chatTopBar
+            if let pending = chatSession.pendingConfirmation {
+                confirmationCard(pending)
+            }
+            messagesArea
             if commandRouter != nil {
+                if let permissionsManager, let onOpenSettings {
+                    ChatHintRow(
+                        mode: selectedMode,
+                        permissions: permissionsManager,
+                        hasGeminiKey: hasGeminiKey,
+                        hasAnthropicKey: hasAnthropicKey,
+                        onOpenSettings: onOpenSettings
+                    )
+                }
                 ChatCommandBar(
                     chatSession: chatSession,
                     selectedMode: $selectedMode,
@@ -123,28 +191,12 @@ struct ChatView: View {
                     isPinned: isPinned,
                     isRecording: inputBuffer?.isRecording ?? false,
                     isTranscribing: inputBuffer?.isTranscribing ?? false,
-                    onToggleRecord: onToggleVoiceRecord,
-                    onToggleHistory: onLoadConversation != nil ? { showHistorySidebar.toggle() } : nil,
-                    isHistoryOpen: showHistorySidebar
+                    onToggleRecord: onToggleVoiceRecord
                 )
-                if let permissionsManager, let onOpenSettings {
-                    ChatHintRow(
-                        mode: selectedMode,
-                        permissions: permissionsManager,
-                        hasGeminiKey: hasGeminiKey,
-                        hasAnthropicKey: hasAnthropicKey,
-                        onOpenSettings: onOpenSettings
-                    )
-                }
             } else {
-                chatHeader
-            }
-            Divider().background(JarvisTheme.hairline)
-            messagesArea
-            if let pending = chatSession.pendingConfirmation {
-                confirmationCard(pending)
-            }
-            if commandRouter == nil {
+                // Legacy callers without a commandRouter keep the old header
+                // + input bar. Rarely hit in practice (hotkey paths all route
+                // through the router), but retained for safety.
                 Divider().background(JarvisTheme.hairline)
                 inputBar
             }
@@ -448,22 +500,25 @@ struct ChatView: View {
         }
     }
 
-    /// v1.4 Fase 2c: centred greeting that mirrors the Gemini macOS app
-    /// reference — top-centred multi-hue sparkle, big soft "Hej {firstName}"
-    /// + "Hvad har du på hjerte?" subline, roomy vertical whitespace. Quick
-    /// starters move to the command bar's "+" menu.
+    /// v1.4 Fase 2c: centred greeting, matches the Gemini macOS reference.
+    /// The sub-line is drawn from `GreetingProvider`'s 200-line rotating
+    /// library — a new one picks every time the empty-state appears so the
+    /// app never feels scripted.
     private var emptyState: some View {
-        VStack(spacing: 0) {
+        let pair = GreetingProvider.random(name: Self.greetingName)
+        return VStack(spacing: 0) {
             Spacer(minLength: 40)
             jarvisSparkle
                 .padding(.bottom, 30)
-            Text("Hej \(Self.greetingName)")
+            Text(pair.hello)
                 .font(.system(size: 32, weight: .regular, design: .rounded))
                 .foregroundStyle(JarvisTheme.textPrimary)
-            Text("Hvad har du på hjerte?")
-                .font(.system(size: 32, weight: .regular, design: .rounded))
+            Text(pair.line)
+                .font(.system(size: 24, weight: .regular, design: .rounded))
                 .foregroundStyle(JarvisTheme.textPrimary.opacity(0.9))
-                .padding(.top, 2)
+                .multilineTextAlignment(.center)
+                .padding(.top, 6)
+                .padding(.horizontal, 40)
             Spacer(minLength: 30)
         }
         .frame(maxWidth: .infinity)
@@ -491,15 +546,10 @@ struct ChatView: View {
             .shadow(color: Color.white.opacity(0.20), radius: 6)
     }
 
-    /// User's preferred first name for the greeting. Pulled from the macOS
-    /// full-name → first-token; falls back to a generic "Parti" so the UI
-    /// still reads naturally on brand-new installs.
-    private static var greetingName: String {
-        let full = NSFullUserName()
-        let trimmed = full.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return "der" }
-        return trimmed.split(separator: " ").first.map(String.init) ?? trimmed
-    }
+    /// Name shown in the greeting. Per user preference (2026-04-19), the
+    /// default nickname is just "P" — short, personal, Jarvis-feel. Future:
+    /// expose this as a Settings string so other users can set their own.
+    private static var greetingName: String { "P" }
 
     private var modeQuickStartGrid: some View {
         // Show up to 6 modes in a 3-column grid — gives a glanceable
