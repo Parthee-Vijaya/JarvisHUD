@@ -374,7 +374,7 @@ class HUDWindowController {
         hostingController.view.layoutSubtreeIfNeeded()
         let fitting = hostingController.view.fittingSize
         let screenVisible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let targetWidth = max(fitting.width, 880)
+        let targetWidth = max(fitting.width, 960)
         let targetHeight = min(fitting.height, screenVisible.height - 40)
         let origin = NSPoint(
             x: screenVisible.maxX - targetWidth - Constants.HUD.padding,

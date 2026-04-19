@@ -24,20 +24,22 @@ struct InfoModeView: View {
                 tilesRow.fixedSize(horizontal: false, vertical: true)
                 airAndMoonRow.fixedSize(horizontal: false, vertical: true)
 
-                // Wide tiles paired side-by-side so the panel fits on a
-                // laptop screen without scrolling. Each pair has matching
-                // heights via the same fixedSize trick.
+                // Commute tile owns a full-width row: internally it now
+                // splits horizontally (stats/chips/traffic/pinned/input on
+                // the left, map + charger legend on the right), which keeps
+                // the overall tile shorter than the old vertically-stacked
+                // layout could.
+                commuteTile.fixedSize(horizontal: false, vertical: true)
+
+                // Claude-stats, system and network keep a 2-col pairing so
+                // the panel reads symmetrically after the wide commute row.
                 HStack(alignment: .top, spacing: 12) {
-                    commuteTile
                     claudeStatsTile
+                    systemTile
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
-                HStack(alignment: .top, spacing: 12) {
-                    systemTile
-                    networkActions
-                }
-                .fixedSize(horizontal: false, vertical: true)
+                networkActions.fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -46,10 +48,11 @@ struct InfoModeView: View {
         // gradient + material + hairline stroke. Cockpit, Briefing and the
         // corner HUD all wear the same shell now.
         //
-        // Width widened to 880pt so the 2×2 bottom grid has breathing room.
-        // Height still derived from content (HUDWindow clamps to screen
-        // height if the user's display is shorter than the panel wants).
-        .frame(width: 880, alignment: .topLeading)
+        // Width 960pt (was 880pt) so the full-width commute tile has
+        // breathing room for its internal horizontal split. Height is
+        // still content-derived — HUDWindow clamps to screen height if
+        // the user's display is shorter than the panel wants.
+        .frame(width: 960, alignment: .topLeading)
         .jarvisChatBackdrop()
         .task { await service.refresh() }
     }
@@ -455,44 +458,73 @@ struct InfoModeView: View {
 
     private var commuteTile: some View {
         tile(title: commuteTitle, icon: "house.fill", fullWidth: true) {
-            // Text column first — now full-width so we can afford bigger
-            // numbers and denser rows (ETA, destination weather, traffic
-            // chip). The map previously occupied the right third; it now
-            // sits at the bottom as a full-width strip.
-            commuteStatsColumn
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            commuteChipsRow
-                .padding(.top, 4)
-
-            trafficEventsSection
-
-            pinnedDestinationsRow
-
-            destinationInputRow
-                .padding(.top, 8)
-
-            if let commute = service.commute, !commute.routeCoordinates.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    CommuteMapView(
-                        origin: commute.origin,
-                        destination: commute.destination,
-                        coordinates: commute.routeCoordinates,
-                        chargers: service.chargers
-                    )
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 320)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white.opacity(0.30), lineWidth: 1)
-                    )
-                    if !service.chargers.isEmpty {
-                        chargerLegend
-                    }
+            // Horizontal split so the tile is wide, not tall:
+            //   Left  — text content (stats / chips / traffic / pinned /
+            //           input). Flexible width, fills remaining space.
+            //   Right — map + charger legend. Fixed 360pt wide so the map
+            //           always has enough horizontal room to be navigable.
+            // `.fixedSize(vertical: true)` on the whole row keeps both
+            // columns aligned to the tallest natural height.
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    commuteStatsColumn
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    commuteChipsRow
+                    trafficEventsSection
+                    pinnedDestinationsRow
+                    destinationInputRow
                 }
-                .padding(.top, 6)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                commuteMapColumn
+                    .frame(width: 360)
             }
+        }
+    }
+
+    /// Right-hand map column. Fills the vertical space left by the tallest
+    /// sibling in the HStack, so the map grows/shrinks with the text
+    /// content — no empty space regardless of what's on the left.
+    @ViewBuilder
+    private var commuteMapColumn: some View {
+        if let commute = service.commute, !commute.routeCoordinates.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                CommuteMapView(
+                    origin: commute.origin,
+                    destination: commute.destination,
+                    coordinates: commute.routeCoordinates,
+                    chargers: service.chargers
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.30), lineWidth: 1)
+                )
+                if !service.chargers.isEmpty {
+                    chargerLegend
+                }
+            }
+            .frame(minHeight: 340)
+        } else {
+            // Placeholder keeps the column reserved while the route is
+            // still computing — otherwise the left column would reflow
+            // to full-width mid-refresh.
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .overlay(
+                    VStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Beregner rute…")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.55))
+                    }
+                )
+                .frame(minHeight: 340)
         }
     }
 
