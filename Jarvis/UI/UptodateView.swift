@@ -8,7 +8,6 @@ struct UptodateView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().background(JarvisTheme.neonCyan.opacity(0.2))
             VStack(spacing: 12) {
                 topRow
                 middleRow
@@ -19,52 +18,62 @@ struct UptodateView: View {
         }
         .frame(width: 720, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
+        // v1.4 Fase 2c: same chat-family backdrop as Cockpit + corner HUD
+        // so Briefing slots into the unified visual system.
+        .jarvisChatBackdrop()
         .task {
             await service.refresh()
         }
     }
 
-    // MARK: - Header
+    // MARK: - Header (chat-family minimal chrome)
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .foregroundStyle(JarvisTheme.neonCyan)
-                .shadow(color: JarvisTheme.neonCyan.opacity(0.7), radius: 4)
+        HStack(alignment: .center, spacing: 8) {
+            JarvisWordmark(fontSize: 13)
             Text("Briefing")
-                .font(.headline)
-                .foregroundStyle(JarvisTheme.brightCyan)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(JarvisTheme.textPrimary)
+                .padding(.leading, 4)
             if let last = service.lastRefresh {
-                Text("· opdateret \(timeAgo(last))")
+                Text("opdateret \(timeAgo(last))")
                     .font(.caption2)
-                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.5))
+                    .foregroundStyle(JarvisTheme.textMuted)
             }
             Spacer()
             Button {
                 Task { await service.refresh(force: true) }
             } label: {
                 Image(systemName: service.state == .loading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.8))
-                    .rotationEffect(.degrees(service.state == .loading ? 360 : 0))
-                    .animation(
-                        service.state == .loading
-                            ? .linear(duration: 1).repeatForever(autoreverses: false)
-                            : .default,
-                        value: service.state
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.textSecondary)
+                    .frame(width: 24, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(JarvisTheme.surfaceElevated.opacity(0.55))
                     )
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("Opdater")
+            .accessibilityLabel("Opdater")
 
             Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.55))
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.textSecondary)
+                    .frame(width: 24, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(JarvisTheme.surfaceElevated.opacity(0.55))
+                    )
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("Luk")
+            .accessibilityLabel("Luk")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
     }
 
     // MARK: - Rows

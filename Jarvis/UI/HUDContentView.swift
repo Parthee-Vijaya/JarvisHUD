@@ -69,7 +69,11 @@ struct HUDContentView: View {
                 }
                 .padding(Constants.HUD.padding)
                 .frame(width: Constants.HUD.width)
-                .jarvisHUDBackground()
+                // v1.4 Fase 2c: Q&A / recording / result HUD now wears the
+                // chat-family backdrop (navy gradient + material) so the
+                // corner panel reads as part of the same visual system as
+                // the chat window.
+                .jarvisChatBackdrop()
                 .onHover { hovering in onHoverChanged?(hovering) }
             }
         }
@@ -245,14 +249,11 @@ struct HUDContentView: View {
     // MARK: - Result
 
     private func resultView(text: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(JarvisTheme.accent)
-                    .frame(width: 8, height: 8)
-                Text(Constants.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(JarvisTheme.textPrimary)
+        VStack(alignment: .leading, spacing: 12) {
+            // v1.4 Fase 2c: chat-family header — tiny wordmark leading,
+            // slim icon cluster trailing. Replaces the dot+text header.
+            HStack(alignment: .center, spacing: 8) {
+                JarvisWordmark(fontSize: 12)
                 Spacer()
                 iconButton(system: state.isPinned ? "pin.fill" : "pin",
                            active: state.isPinned, help: state.isPinned ? "Unpin" : "Pin") {
@@ -263,9 +264,6 @@ struct HUDContentView: View {
                 }
                 iconButton(system: "xmark", help: "Luk", action: onClose)
             }
-            Rectangle()
-                .fill(JarvisTheme.hairline)
-                .frame(height: 1)
 
             // Rules:
             // - Short answers flow naturally — HUD grows to fit.

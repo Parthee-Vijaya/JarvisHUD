@@ -13,7 +13,6 @@ struct InfoModeView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().background(JarvisTheme.neonCyan.opacity(0.2))
             VStack(spacing: 12) {
                 tilesRow
                 airAndMoonRow
@@ -25,51 +24,61 @@ struct InfoModeView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
         }
-        // Width is fixed; height is derived from the content. The earlier
-        // v1.2.1 combo of .fixedSize(vertical: true) + tile .frame(maxHeight:
-        // .infinity) triggered a window-sizing feedback loop (NSHostingView.
-        // layout → NSWindow _setFrameCommon → NSHostingView.layout …) that
-        // overflowed the main-thread stack at ~6900 frames. Removing the
-        // tile maxHeight below lets each tile report its natural height, so
-        // the outer sum is stable and NSHostingController.preferredContentSize
-        // settles on one value.
+        // v1.4 Fase 2c: share the chat window's visual language — navy
+        // gradient + material + hairline stroke. Cockpit, Briefing and the
+        // corner HUD all wear the same shell now, so a user switching
+        // between them doesn't feel like they're in different apps.
+        //
+        // Width is still fixed; height is derived from the content. See the
+        // v1.2.3 crash-fix comment on the NSHostingController feedback
+        // loop for why we can't use .fixedSize here.
         .frame(width: 680, alignment: .topLeading)
+        .jarvisChatBackdrop()
         .task { await service.refresh() }
     }
 
-    // MARK: - Header
+    // MARK: - Header (chat-family minimal chrome)
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "info.circle.fill")
-                .foregroundStyle(JarvisTheme.neonCyan)
-                .shadow(color: JarvisTheme.neonCyan.opacity(0.7), radius: 4)
+        HStack(alignment: .center, spacing: 8) {
+            JarvisWordmark(fontSize: 13)
             Text("Cockpit")
-                .font(.headline)
-                .foregroundStyle(JarvisTheme.brightCyan)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(JarvisTheme.textPrimary)
+                .padding(.leading, 4)
             if let last = service.lastRefresh {
-                Text("· opdateret \(timeAgo(last))")
+                Text("opdateret \(timeAgo(last))")
                     .font(.caption2)
-                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.5))
+                    .foregroundStyle(JarvisTheme.textMuted)
             }
             Spacer()
-            Button {
+            topChromeButton(system: service.state == .loading ? "arrow.triangle.2.circlepath" : "arrow.clockwise",
+                            help: "Opdater") {
                 Task { await service.refresh(force: true) }
-            } label: {
-                Image(systemName: service.state == .loading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.8))
             }
-            .buttonStyle(.borderless)
-            .help("Opdater")
-
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(JarvisTheme.neonCyan.opacity(0.55))
-            }
-            .buttonStyle(.borderless)
+            topChromeButton(system: "xmark", help: "Luk", action: onClose)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+
+    /// Slim top-right icon button matching the one on `ChatView.chatTopBar`
+    /// so Cockpit's chrome reads identically.
+    private func topChromeButton(system: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(JarvisTheme.textSecondary)
+                .frame(width: 24, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(JarvisTheme.surfaceElevated.opacity(0.55))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: - Tiles row (weather + news + commute)
