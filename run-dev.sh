@@ -33,14 +33,17 @@ if [[ "${1:-}" != "--no-build" ]]; then
     # Screen-Recording grants don't carry over — causing the permission dialog
     # to pop up on every single run. Signing adhoc keeps `pavi.Jarvis` stable
     # across builds and lets TCC track a single persistent identity.
+    # v1.4: dropped the adhoc `-` identity override because it breaks
+    # Widget Extension targets — App Groups entitlements require a real
+    # provisioning profile, which Xcode only issues under automatic
+    # signing. The project's targets have DEVELOPMENT_TEAM + automatic
+    # signing set correctly; let xcodebuild do its thing so widgets work.
+    # TCC preservation still holds because the main app's bundle ID
+    # (pavi.Jarvis) is stable regardless of signing identity.
     xcodebuild -project "$PROJECT" \
         -scheme "$SCHEME" \
         -configuration Debug \
         -derivedDataPath "$BUILD_DIR" \
-        CODE_SIGN_IDENTITY="-" \
-        CODE_SIGN_STYLE=Manual \
-        CODE_SIGNING_REQUIRED=YES \
-        CODE_SIGNING_ALLOWED=YES \
         build 2>&1 | grep -E "(error:|warning:|BUILD SUCCEEDED|BUILD FAILED)" | head -30
 fi
 
