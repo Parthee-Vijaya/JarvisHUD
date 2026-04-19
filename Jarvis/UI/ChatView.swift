@@ -511,8 +511,8 @@ struct ChatView: View {
         let pair = GreetingProvider.random(name: Self.greetingName)
         return VStack(spacing: 0) {
             Spacer(minLength: 40)
-            jarvisSparkle
-                .padding(.bottom, 30)
+            JarvisWordmark()
+                .padding(.bottom, 28)
             Text(pair.hello)
                 .font(.system(size: 32, weight: .regular, design: .rounded))
                 .foregroundStyle(JarvisTheme.textPrimary)
@@ -525,28 +525,6 @@ struct ChatView: View {
             Spacer(minLength: 30)
         }
         .frame(maxWidth: .infinity)
-    }
-
-    /// Multicolour Gemini-style spark with an angular gradient. Built from the
-    /// system `sparkle` SF Symbol so it stays sharp at any Dynamic Type size
-    /// and matches Apple's own Intelligence iconography.
-    private var jarvisSparkle: some View {
-        Image(systemName: "sparkle")
-            .font(.system(size: 28, weight: .semibold))
-            .foregroundStyle(
-                AngularGradient(
-                    colors: [
-                        Color(red: 0.30, green: 0.55, blue: 1.00),   // blue
-                        Color(red: 0.66, green: 0.39, blue: 0.95),   // purple
-                        Color(red: 0.95, green: 0.42, blue: 0.58),   // pink
-                        Color(red: 0.99, green: 0.72, blue: 0.30),   // amber
-                        Color(red: 0.30, green: 0.80, blue: 0.55),   // green
-                        Color(red: 0.30, green: 0.55, blue: 1.00)    // back to blue
-                    ],
-                    center: .center
-                )
-            )
-            .shadow(color: Color.white.opacity(0.20), radius: 6)
     }
 
     /// Name shown in the greeting. Per user preference (2026-04-19), the
