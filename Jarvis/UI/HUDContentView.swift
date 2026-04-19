@@ -40,6 +40,10 @@ struct HUDContentView: View {
     /// Called true on pointer-enter and false on leave over the non-chat HUD card
     /// so the auto-close timer can be paused while the user is still reading.
     var onHoverChanged: ((Bool) -> Void)?
+    /// v1.4 Fase 2b.5: optional retry callback for the error card. When nil,
+    /// the error view hides the "Prøv igen" button. Set by HUDWindowController
+    /// when `showError(_:retryHandler:)` is called with a non-nil handler.
+    var onErrorRetry: (() -> Void)?
 
     @State private var appeared = false
 
@@ -278,6 +282,23 @@ struct HUDContentView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(JarvisTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let onErrorRetry {
+                Button {
+                    onErrorRetry()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Prøv igen")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(JarvisTheme.accent)
+                .controlSize(.small)
+                .padding(.top, 2)
+                .accessibilityHint("Kører den seneste kommando igen")
+            }
         }
     }
 

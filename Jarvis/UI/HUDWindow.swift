@@ -77,8 +77,14 @@ class HUDWindowController {
         scheduleAutoClose(after: Constants.Timers.confirmationAutoClose)
     }
 
-    func showError(_ message: String) {
+    /// v1.4 Fase 2b.5: optional retry handler displayed as "Prøv igen" in
+    /// the error card. Cleared on any phase transition and on close so a
+    /// stale handler can't fire against a later context.
+    var onErrorRetryRequested: (() -> Void)?
+
+    func showError(_ message: String, retryHandler: (() -> Void)? = nil) {
         cancelRecordingTimer()
+        onErrorRetryRequested = retryHandler
         hudState.currentPhase = .error(message: message)
         if panel == nil { presentPanel() }
         scheduleAutoClose(after: Constants.Timers.errorAutoClose)
@@ -149,6 +155,7 @@ class HUDWindowController {
         cancelAutoClose()
         cancelRecordingTimer()
         lastAutoCloseSeconds = nil
+        onErrorRetryRequested = nil
         panel?.close()
         panel = nil
         hudState.isVisible = false
@@ -194,7 +201,11 @@ class HUDWindowController {
             currentConversationID: currentConversationID,
             onLoadConversation: onLoadConversation != nil ? { [weak self] id in self?.onLoadConversation?(id) } : nil,
             onDeleteConversation: onDeleteConversation != nil ? { [weak self] id in self?.onDeleteConversation?(id) } : nil,
-            onHoverChanged: { [weak self] hovering in self?.onHoverChanged(hovering) }
+            onHoverChanged: { [weak self] hovering in self?.onHoverChanged(hovering) },
+            onErrorRetry: onErrorRetryRequested.map { handler in { [weak self] in
+                handler()
+                self?.close()
+            } }
         )
     }
 

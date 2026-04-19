@@ -228,10 +228,37 @@ class RecordingPipeline {
             deliverResult(text, mode: mode)
         case .failure(let error):
             LoggingService.shared.log("Model error: \(error)", level: .error)
-            hudController.showError("Fejl: \(error.localizedDescription)")
+            // v1.4 Fase 2b.5: offer a retry handler on transient failures
+            // (network blips, server 5xx, timeout). Non-transient errors —
+            // missing API key, bad request, safety-block — don't get a
+            // retry button because replaying the same input won't help.
+            let retry = Self.isTransient(error) ? { [weak self, audioData, screenshot, mode] in
+                guard let self else { return }
+                Task { await self.processRecording(audioData: audioData, screenshot: screenshot, mode: mode) }
+            } : nil
+            hudController.showError("Fejl: \(error.localizedDescription)", retryHandler: retry)
         }
 
         resetPipeline()
+    }
+
+    /// Classify whether an error is worth retrying with the same input.
+    /// Mirrors the classifier in `GeminiClient.isTransientError` but widened
+    /// to Anthropic / URL / HTTP surfaces so the HUD retry button lights up
+    /// consistently across providers.
+    private static func isTransient(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            let transient = [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost,
+                             NSURLErrorNotConnectedToInternet, NSURLErrorCannotConnectToHost]
+            if transient.contains(ns.code) { return true }
+        }
+        if let rest = error as? GeminiRESTError,
+           case .httpError(let code, _) = rest,
+           (500..<600).contains(code) {
+            return true
+        }
+        return false
     }
 
     /// Run local STT if available. Returns nil when the transcriber isn't
