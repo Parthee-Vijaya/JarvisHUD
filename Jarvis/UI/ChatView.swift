@@ -80,7 +80,7 @@ struct ChatView: View {
             }
             mainColumn
         }
-        .animation(.easeInOut(duration: 0.18), value: showHistorySidebar)
+        .animation(JarvisTheme.springSnappy, value: showHistorySidebar)
     }
 
     private var mainColumn: some View {
@@ -412,7 +412,7 @@ struct ChatView: View {
             }
             .onChange(of: chatSession.messages.count) {
                 if let last = chatSession.messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(JarvisTheme.springSnappy) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }

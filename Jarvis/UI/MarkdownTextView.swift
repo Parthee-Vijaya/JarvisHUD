@@ -221,11 +221,11 @@ private struct CodeBlockView: View {
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(content, forType: .string)
-        withAnimation(.easeInOut(duration: 0.15)) { copied = true }
+        withAnimation(JarvisTheme.springSnappy) { copied = true }
         // Clear the visual after 1.5 s — short enough to not get stuck, long
         // enough for the user to confirm the copy happened.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation(.easeInOut(duration: 0.2)) { copied = false }
+            withAnimation(JarvisTheme.springSnappy) { copied = false }
         }
     }
 }
@@ -345,7 +345,7 @@ private struct CitationChip: View {
         .buttonStyle(.plain)
         .help(citation.url.absoluteString)
         .onHover { hovering = $0 }
-        .animation(.easeInOut(duration: 0.12), value: hovering)
+        .animation(JarvisTheme.springSnappy, value: hovering)
     }
 
     /// Prefer the page title; fall back to the host if the title is long or

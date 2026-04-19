@@ -178,8 +178,8 @@ struct HUDContentView: View {
             // Prominent waveform — the visual emphasis of the recording HUD
             WaveformScope(buffer: waveform, height: 72)
         }
-        .animation(.easeInOut(duration: 0.2), value: audioLevel.isSilent)
-        .animation(.easeInOut(duration: 0.2), value: speechService.transcript.isEmpty)
+        .animation(JarvisTheme.springSnappy, value: audioLevel.isSilent)
+        .animation(JarvisTheme.springSnappy, value: speechService.transcript.isEmpty)
     }
 
     // MARK: - Processing
@@ -193,7 +193,7 @@ struct HUDContentView: View {
                 Text(state.currentStep?.displayText ?? "Behandler…")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(JarvisTheme.textPrimary)
-                    .animation(.easeInOut(duration: 0.2), value: state.currentStep)
+                    .animation(JarvisTheme.springSnappy, value: state.currentStep)
                 Spacer()
                 if let step = state.currentStep {
                     Image(systemName: step.icon)

@@ -724,7 +724,7 @@ struct InfoModeView: View {
                     .fill(barColor)
                     .frame(width: barWidth * CGFloat(fraction))
                     .shadow(color: barColor.opacity(0.6), radius: 3)
-                    .animation(.easeOut(duration: 0.4), value: fraction)
+                    .animation(JarvisTheme.spring, value: fraction)
             }
             .frame(maxWidth: barWidth, maxHeight: 6)
             .frame(height: 6)
