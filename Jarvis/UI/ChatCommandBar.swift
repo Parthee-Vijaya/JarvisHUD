@@ -33,10 +33,7 @@ struct ChatCommandBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 16))
-                .foregroundStyle(JarvisTheme.accent)
-                .shadow(color: JarvisTheme.accent.opacity(0.4), radius: 5)
+            plusMenu
 
             TextField(placeholder, text: $commandText, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -97,6 +94,92 @@ struct ChatCommandBar: View {
             case "Dictation":    return "Skriv eller tryk mic for at tale…"
             default:             return "Hvad kan jeg hjælpe med?"
             }
+        }
+    }
+
+    // MARK: - Plus menu (attachments + mode quick-switch)
+
+    /// v1.4 Fase 2c: compact "+" button that replaces the leading sparkle
+    /// icon. Opens a Menu with the attachment + mode actions that used to be
+    /// scattered across the mode picker + document-mode submit button. Matches
+    /// the Gemini desktop reference layout.
+    private var plusMenu: some View {
+        Menu {
+            Button {
+                switchTo(inputKind: .document, fallback: BuiltInModes.summarize)
+            } label: {
+                Label("Vedhæft fil", systemImage: "paperclip")
+            }
+
+            Button {
+                switchTo(inputKind: .screenshot, fallback: BuiltInModes.vision)
+            } label: {
+                Label("Tag skærmbillede", systemImage: "camera.viewfinder")
+            }
+
+            Divider()
+
+            // Modes submenu — quick switch without hunting through the mode
+            // picker. Keeps the plus menu as the "what do you want to do?"
+            // entry point; the mode-chip further right stays for power users.
+            Menu {
+                ForEach(availableModes, id: \.id) { mode in
+                    Button {
+                        selectedMode = mode
+                        inputFocused = true
+                    } label: {
+                        HStack {
+                            Label(mode.name, systemImage: mode.icon)
+                            if let shortcut = shortcutLookup(mode) {
+                                Spacer()
+                                Text(shortcut)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(JarvisTheme.textMuted)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label("Skift tilstand", systemImage: "square.grid.2x2")
+            }
+
+            Button {
+                commandText = ""
+                chatSession.clear()
+                onNewChat()
+            } label: {
+                Label("Ny samtale", systemImage: "plus.circle")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(JarvisTheme.textPrimary)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(JarvisTheme.surfaceElevated.opacity(0.9))
+                )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Vedhæft eller skift tilstand")
+    }
+
+    /// Flip the selected mode to one whose `inputKind` matches the requested
+    /// kind, falling back to the supplied mode when the availableModes list
+    /// doesn't include one (can happen during mode-file editing). For
+    /// `.document` and `.screenshot`, also calls `performSubmit()` immediately
+    /// so the user's click fires the picker/screenshot without a second tap.
+    private func switchTo(inputKind: InputKind, fallback: Mode) {
+        let target = availableModes.first { $0.inputKind == inputKind } ?? fallback
+        selectedMode = target
+        inputFocused = true
+        // Document + screenshot modes normally submit-on-select (the user's
+        // intent is "open picker now"), matching the mode-picker's previous
+        // behaviour.
+        if inputKind == .document || inputKind == .screenshot {
+            performSubmit()
         }
     }
 

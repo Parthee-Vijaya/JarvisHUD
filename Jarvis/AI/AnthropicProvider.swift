@@ -50,6 +50,15 @@ final class AnthropicProvider: AIProvider {
         let usage = (root["usage"] as? [String: Any]) ?? [:]
         let inputTokens = (usage["input_tokens"] as? Int) ?? 0
         let outputTokens = (usage["output_tokens"] as? Int) ?? 0
+        // v1.4 Fase 3: Anthropic reports cache usage in separate fields when
+        // prompt caching is active. Surface them in the log so the user can
+        // see the savings; a later commit will propagate them into
+        // UsageTracker for the Cockpit tile.
+        let cacheRead = (usage["cache_read_input_tokens"] as? Int) ?? 0
+        let cacheCreate = (usage["cache_creation_input_tokens"] as? Int) ?? 0
+        if cacheRead > 0 || cacheCreate > 0 {
+            LoggingService.shared.log("Anthropic cache: read=\(cacheRead) tokens, create=\(cacheCreate) tokens")
+        }
 
         return AIResponse(
             text: text,
@@ -176,8 +185,24 @@ final class AnthropicProvider: AIProvider {
             "messages": jsonMessages,
             "stream": streaming
         ]
+        // v1.4 Fase 3: prompt caching on the system prompt. Large agent-mode
+        // system prompts repeat across every tool-loop iteration — marking
+        // them as `cache_control: ephemeral` tells Anthropic to reuse the
+        // computed KV-cache for up to 5 minutes, cutting input-token cost on
+        // repeat turns by ~90%. Only applied when systemText is long enough
+        // to be worth caching (Anthropic requires ≥ 1024 input tokens on
+        // Sonnet / ≥ 2048 on Haiku; we gate at 1500 chars ≈ 1100 tokens as
+        // a safe lower bound across models).
         if let systemText, !systemText.isEmpty {
-            body["system"] = systemText
+            if systemText.count >= 1500 {
+                body["system"] = [[
+                    "type": "text",
+                    "text": systemText,
+                    "cache_control": ["type": "ephemeral"]
+                ] as [String: Any]]
+            } else {
+                body["system"] = systemText
+            }
         }
         if let temp = options.temperature {
             body["temperature"] = temp

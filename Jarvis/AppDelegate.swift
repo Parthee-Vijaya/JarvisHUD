@@ -210,7 +210,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             geminiClient: geminiClient,
             screenCapture: screenCapture,
             summaryService: summaryService,
-            chatSession: chatSession
+            chatSession: chatSession,
+            instantAnswers: InstantAnswerProvider(infoModeService: infoModeService)
         )
         commandRouter = router
         hudController.commandRouter = router

@@ -33,6 +33,11 @@ final class ChatCommandRouter {
     private let screenCapture: ScreenCaptureService
     private let summaryService: DocumentSummaryService
     private let chatSession: ChatSession
+    /// v1.4 Fase 3 (first slice): intercepts trivial queries (time, date, IP,
+    /// battery, WiFi, weather) and answers locally before the AI call.
+    /// Optional so older callers (hotkey-only codepaths) can still construct
+    /// the router without a full InfoModeService instance.
+    private let instantAnswers: InstantAnswerProvider?
 
     init(
         chatPipeline: ChatPipeline,
@@ -40,7 +45,8 @@ final class ChatCommandRouter {
         geminiClient: GeminiClient,
         screenCapture: ScreenCaptureService,
         summaryService: DocumentSummaryService,
-        chatSession: ChatSession
+        chatSession: ChatSession,
+        instantAnswers: InstantAnswerProvider? = nil
     ) {
         self.chatPipeline = chatPipeline
         self.agentChatPipeline = agentChatPipeline
@@ -48,6 +54,7 @@ final class ChatCommandRouter {
         self.screenCapture = screenCapture
         self.summaryService = summaryService
         self.chatSession = chatSession
+        self.instantAnswers = instantAnswers
     }
 
     // MARK: - Public
@@ -77,6 +84,23 @@ final class ChatCommandRouter {
 
     private func runText(mode: Mode, input: String) async {
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        // v1.4 Fase 3 preflight: for plain chat / Q&A / default text modes,
+        // try the instant-answer provider before reaching for the network.
+        // Agent + VibeCode + Professional etc. intentionally skip this — the
+        // user wants *transformation*, not a lookup. Grounded Q&A benefits
+        // most (trivial factual query → 0 Gemini round-trip).
+        if let instantAnswers, mode.provider == .gemini, !mode.agentTools,
+           mode.outputType == .chat || mode.outputType == .hud,
+           let answer = await instantAnswers.match(query: input) {
+            LoggingService.shared.log("InstantAnswer hit for: \(input.prefix(60))")
+            chatSession.addUserMessage(input)
+            _ = chatSession.addAssistantMessage(answer)
+            await MetricsService.shared.record(
+                phase: .modelCall, durationMs: 0, mode: mode.name, transport: "instant-answer"
+            )
+            return
+        }
 
         if mode.provider == .anthropic, mode.agentTools,
            let agent = agentChatPipeline() {
