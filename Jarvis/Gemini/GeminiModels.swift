@@ -23,6 +23,22 @@ struct GeminiPart: Codable {
 struct GeminiContent: Codable {
     let role: String      // "user" | "model" | "system"
     let parts: [GeminiPart]
+
+    init(role: String, parts: [GeminiPart]) {
+        self.role = role
+        self.parts = parts
+    }
+
+    // Custom decoder so a response shaped `{"role":"model","content":{}}` or
+    // one where safety-filtering stripped `parts` doesn't crash the whole
+    // pipeline. Missing role/parts decode as empty strings/arrays and the
+    // `text` accessor below treats empty content as a soft empty-response
+    // the caller can surface sensibly.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        role = (try? c.decode(String.self, forKey: .role)) ?? ""
+        parts = (try? c.decode([GeminiPart].self, forKey: .parts)) ?? []
+    }
 }
 
 /// Gemini's tool surface. Each field is its own sub-object by design; we set

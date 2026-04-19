@@ -6,6 +6,9 @@ class HUDWindowController {
     private var panel: NSPanel?
     private var autoCloseTask: Task<Void, Never>?
     private var recordingTimerTask: Task<Void, Never>?
+    /// Remembered so hover-leave can restart the timer with the same budget
+    /// the caller originally requested (confirmation=3s, result=30s, error=10s).
+    private var lastAutoCloseSeconds: TimeInterval?
     let hudState = HUDState()
     let audioLevel = AudioLevelMonitor()
     let waveform = WaveformBuffer()
@@ -60,6 +63,12 @@ class HUDWindowController {
         if panel == nil { presentPanel() }
     }
 
+    /// v1.4 Fase 2b: set (or clear) the narrated progress step shown in the
+    /// processing HUD. Pipeline callers nil this out when their stage ends.
+    func setStep(_ kind: ProcessingStep.Kind?) {
+        hudState.currentStep = kind.map { ProcessingStep($0) }
+    }
+
     func showResult(_ text: String) {
         cancelRecordingTimer()
         hudState.currentPhase = .result(text: text)
@@ -74,8 +83,14 @@ class HUDWindowController {
         scheduleAutoClose(after: Constants.Timers.confirmationAutoClose)
     }
 
-    func showError(_ message: String) {
+    /// v1.4 Fase 2b.5: optional retry handler displayed as "Prøv igen" in
+    /// the error card. Cleared on any phase transition and on close so a
+    /// stale handler can't fire against a later context.
+    var onErrorRetryRequested: (() -> Void)?
+
+    func showError(_ message: String, retryHandler: (() -> Void)? = nil) {
         cancelRecordingTimer()
+        onErrorRetryRequested = retryHandler
         hudState.currentPhase = .error(message: message)
         if panel == nil { presentPanel() }
         scheduleAutoClose(after: Constants.Timers.errorAutoClose)
@@ -145,6 +160,8 @@ class HUDWindowController {
     func close() {
         cancelAutoClose()
         cancelRecordingTimer()
+        lastAutoCloseSeconds = nil
+        onErrorRetryRequested = nil
         panel?.close()
         panel = nil
         hudState.isVisible = false
@@ -189,7 +206,12 @@ class HUDWindowController {
             conversationHistory: conversationHistory,
             currentConversationID: currentConversationID,
             onLoadConversation: onLoadConversation != nil ? { [weak self] id in self?.onLoadConversation?(id) } : nil,
-            onDeleteConversation: onDeleteConversation != nil ? { [weak self] id in self?.onDeleteConversation?(id) } : nil
+            onDeleteConversation: onDeleteConversation != nil ? { [weak self] id in self?.onDeleteConversation?(id) } : nil,
+            onHoverChanged: { [weak self] hovering in self?.onHoverChanged(hovering) },
+            onErrorRetry: onErrorRetryRequested.map { handler in { [weak self] in
+                handler()
+                self?.close()
+            } }
         )
     }
 
@@ -314,11 +336,24 @@ class HUDWindowController {
         }
         cancelAutoClose()
 
+        // v1.4 polish: the panel measures via fittingSize and sizes the
+        // window to match. The Cockpit now arranges tiles as two 3-cols
+        // up top + a 2×2 grid of wide tiles below, so everything fits on
+        // a laptop screen without scrolling. If a very-short display can't
+        // accommodate it, the window still clamps to screen height — but
+        // the 2×2 compaction means typical layouts no longer need a
+        // ScrollView wrapper (which was breaking per-row symmetry).
         let view = InfoModeView(service: infoModeService) { [weak self] in self?.close() }
             .jarvisHUDBackground(showReticle: false)
 
         let hostingController = NSHostingController(rootView: view)
-        hostingController.sizingOptions = .preferredContentSize
+        // DO NOT set sizingOptions = .preferredContentSize. That option tells
+        // NSHostingView to continuously observe SwiftUI's preferred size and
+        // resize the window in response. Combined with MKMapView (autoresizing
+        // mask) + any dynamic content, it spins into a setFrame → layout →
+        // setFrame loop and overflows the main-thread stack at ~6900 frames.
+        // Instead we measure the SwiftUI content's fittingSize ONCE below and
+        // pin the panel to that size.
 
         let panel = JarvisKeyablePanel(contentViewController: hostingController)
         panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
@@ -331,9 +366,21 @@ class HUDWindowController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.minSize = NSSize(width: 520, height: 200)
 
-        // Let the SwiftUI intrinsic content size drive the panel height; we
-        // only pin the top-right anchor after the hosting controller sets it.
-        anchorPanelTopRight(panel)
+        // One-shot measurement: force the hosting view to layout once so we
+        // can read its fittingSize. Because no window is observing it yet,
+        // there's no feedback loop. InfoModeView now lives inside a
+        // ScrollView so the fittingSize's height is effectively "as tall as
+        // the content wants", which we clamp against the visible screen.
+        hostingController.view.layoutSubtreeIfNeeded()
+        let fitting = hostingController.view.fittingSize
+        let screenVisible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let targetWidth = max(fitting.width, 960)
+        let targetHeight = min(fitting.height, screenVisible.height - 40)
+        let origin = NSPoint(
+            x: screenVisible.maxX - targetWidth - Constants.HUD.padding,
+            y: screenVisible.maxY - targetHeight - Constants.HUD.padding
+        )
+        panel.setFrame(NSRect(origin: origin, size: NSSize(width: targetWidth, height: targetHeight)), display: true)
 
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -390,10 +437,26 @@ class HUDWindowController {
     /// persists its frame. Safe to delete once all callers are updated.
     func saveChatFrame() {}
 
+    // MARK: - Hover-pause (v1.3)
+    // Cancel auto-close while the user is hovering the result card, resume
+    // it (with a fresh countdown) on mouse-leave so long answers don't
+    // vanish mid-read. Pin still wins — pinned HUDs never auto-close at all.
+
+    func onHoverChanged(_ hovering: Bool) {
+        guard panel != nil else { return }   // HUD already closed, don't restart anything
+        if hovering {
+            autoCloseTask?.cancel()
+            autoCloseTask = nil
+        } else if let seconds = lastAutoCloseSeconds {
+            scheduleAutoClose(after: seconds)
+        }
+    }
+
     // MARK: - Timers
 
     private func scheduleAutoClose(after seconds: TimeInterval) {
         guard !hudState.isPinned else { return }
+        lastAutoCloseSeconds = seconds
         cancelAutoClose()
         autoCloseTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))

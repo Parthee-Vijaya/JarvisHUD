@@ -73,38 +73,100 @@ struct ChatView: View {
                         // keep sidebar open so user can hop between chats
                     },
                     onDelete: { id in onDeleteConversation?(id) },
-                    onClose: { showHistorySidebar = false }
+                    onClose: { showHistorySidebar = false },
+                    onNewChat: {
+                        chatSession.clear()
+                        commandTextBinding.wrappedValue = ""
+                        selectedMode = BuiltInModes.chat
+                    }
                 )
                 .transition(.move(edge: .leading))
                 Divider().background(JarvisTheme.hairline)
             }
             mainColumn
         }
-        .animation(.easeInOut(duration: 0.18), value: showHistorySidebar)
+        .animation(JarvisTheme.springSnappy, value: showHistorySidebar)
+    }
+
+    // MARK: - Top bar (window chrome — Gemini reference)
+
+    /// Minimal top-right button cluster: a small screen-capture glyph + a
+    /// minimize chevron + a pin + a history toggle. Kept intentionally short —
+    /// the window's macOS traffic lights cover close, the sidebar has its own
+    /// toggle, and the command bar itself no longer owns any of these.
+    @ViewBuilder
+    private var chatTopBar: some View {
+        HStack(spacing: 6) {
+            Spacer()
+            topIconButton(system: "rectangle.dashed", help: "Skærmbillede + spørg") {
+                selectedMode = BuiltInModes.vision
+                Task { await commandRouter?.run(mode: BuiltInModes.vision, input: "") }
+            }
+            topIconButton(system: "arrow.down.forward.and.arrow.up.backward", help: "Minimer") {
+                onClose()
+            }
+            if onLoadConversation != nil {
+                topIconButton(system: "clock.arrow.circlepath",
+                              active: showHistorySidebar,
+                              help: showHistorySidebar ? "Skjul historik" : "Vis historik") {
+                    showHistorySidebar.toggle()
+                }
+            }
+            topIconButton(system: isPinned ? "pin.fill" : "pin",
+                          active: isPinned,
+                          help: isPinned ? "Unpin" : "Pin") {
+                onPin()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+    }
+
+    private func topIconButton(system: String, active: Bool = false, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(active ? JarvisTheme.accent : JarvisTheme.textSecondary)
+                .frame(width: 24, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(JarvisTheme.surfaceElevated.opacity(0.55))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    /// v1.4 Fase 2c: deep-black → navy gradient behind the chat, matching the
+    /// Gemini desktop reference. Sits on top of the HUD's `.regularMaterial`
+    /// so the chat window reads a touch more "at night" than the corner HUD,
+    /// without losing its floating-glass quality.
+    private var chatBackdropGradient: some View {
+        LinearGradient(
+            stops: [
+                .init(color: Color(red: 0.04, green: 0.04, blue: 0.07), location: 0.0),
+                .init(color: Color(red: 0.05, green: 0.07, blue: 0.14), location: 0.55),
+                .init(color: Color(red: 0.05, green: 0.10, blue: 0.22), location: 1.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .allowsHitTesting(false)
     }
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
+            // Top-right chrome row — thin, just the two pin-style buttons
+            // from the Gemini reference. Close lives on the window's traffic
+            // lights; no full-width header anymore.
+            chatTopBar
+            if let pending = chatSession.pendingConfirmation {
+                confirmationCard(pending)
+            }
+            messagesArea
             if commandRouter != nil {
-                ChatCommandBar(
-                    chatSession: chatSession,
-                    selectedMode: $selectedMode,
-                    commandText: commandTextBinding,
-                    availableModes: availableModes,
-                    shortcutLookup: shortcutLookup,
-                    onSubmit: { text in
-                        Task { await commandRouter?.run(mode: selectedMode, input: text) }
-                    },
-                    onNewChat: { selectedMode = BuiltInModes.chat },
-                    onClose: onClose,
-                    onPin: onPin,
-                    isPinned: isPinned,
-                    isRecording: inputBuffer?.isRecording ?? false,
-                    isTranscribing: inputBuffer?.isTranscribing ?? false,
-                    onToggleRecord: onToggleVoiceRecord,
-                    onToggleHistory: onLoadConversation != nil ? { showHistorySidebar.toggle() } : nil,
-                    isHistoryOpen: showHistorySidebar
-                )
                 if let permissionsManager, let onOpenSettings {
                     ChatHintRow(
                         mode: selectedMode,
@@ -114,15 +176,30 @@ struct ChatView: View {
                         onOpenSettings: onOpenSettings
                     )
                 }
+                ChatCommandBar(
+                    chatSession: chatSession,
+                    selectedMode: $selectedMode,
+                    commandText: commandTextBinding,
+                    availableModes: availableModes,
+                    shortcutLookup: shortcutLookup,
+                    onSubmit: { text in
+                        let image = inputBuffer?.attachedImage
+                        inputBuffer?.attachedImage = nil
+                        Task { await commandRouter?.run(mode: selectedMode, input: text, image: image) }
+                    },
+                    onNewChat: { selectedMode = BuiltInModes.chat },
+                    onClose: onClose,
+                    onPin: onPin,
+                    isPinned: isPinned,
+                    isRecording: inputBuffer?.isRecording ?? false,
+                    isTranscribing: inputBuffer?.isTranscribing ?? false,
+                    onToggleRecord: onToggleVoiceRecord,
+                    inputBuffer: inputBuffer
+                )
             } else {
-                chatHeader
-            }
-            Divider().background(JarvisTheme.hairline)
-            messagesArea
-            if let pending = chatSession.pendingConfirmation {
-                confirmationCard(pending)
-            }
-            if commandRouter == nil {
+                // Legacy callers without a commandRouter keep the old header
+                // + input bar. Rarely hit in practice (hotkey paths all route
+                // through the router), but retained for safety.
                 Divider().background(JarvisTheme.hairline)
                 inputBar
             }
@@ -131,6 +208,7 @@ struct ChatView: View {
             minWidth: Constants.ChatHUD.minWidth,
             minHeight: Constants.ChatHUD.minHeight
         )
+        .background(chatBackdropGradient)
         .overlay(dropHighlight)
         .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             handleDrop(providers: providers)
@@ -308,6 +386,69 @@ struct ChatView: View {
         .help(help)
     }
 
+    // MARK: - Progress narration row (v1.4 Fase 2b)
+
+    /// Compact "what am I doing" line shown below the last assistant message
+    /// while a reply is being awaited or streamed. Reads the kind/icon/text
+    /// straight off `ProcessingStep` so new Kinds auto-render without edits
+    /// here.
+    private struct ProgressNarrationRow: View {
+        let step: ProcessingStep
+        @State private var dim = false
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Image(systemName: step.icon)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(JarvisTheme.accent)
+                Text(step.displayText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(JarvisTheme.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(JarvisTheme.surfaceElevated.opacity(0.5))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(JarvisTheme.accent.opacity(0.15), lineWidth: 0.5)
+            )
+            .opacity(dim ? 0.65 : 1.0)
+            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: dim)
+            .onAppear { dim = true }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(step.displayText)
+        }
+    }
+
+    // MARK: - Tool invocations (v1.4 Fase 2b.2)
+
+    @ViewBuilder
+    private var toolInvocationsSection: some View {
+        let count = chatSession.agentToolInvocations.count
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.textSecondary)
+                Text(count == 1 ? "1 værktøj kørt" : "\(count) værktøjer kørt")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(JarvisTheme.textSecondary)
+            }
+            .padding(.horizontal, 4)
+            VStack(spacing: 4) {
+                ForEach(Array(chatSession.agentToolInvocations.enumerated()), id: \.offset) { _, invocation in
+                    ToolInvocationCard(invocation: invocation)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
+    }
+
     // MARK: - Messages
 
     private var messagesArea: some View {
@@ -322,9 +463,26 @@ struct ChatView: View {
                             message: message,
                             onRetry: commandRouter.map { router in
                                 { msg in Task { await router.retry(msg) } }
-                            }
+                            },
+                            isStreaming: chatSession.isStreaming
+                                && message.role == .assistant
+                                && message.id == chatSession.messages.last?.id
                         )
                         .id(message.id)
+                    }
+                    // v1.4 Fase 2b.2: render agent tool invocations as compact
+                    // cards after the message log. Appears when Agent mode has
+                    // run tools in the current session; collapsed by default.
+                    if !chatSession.agentToolInvocations.isEmpty {
+                        toolInvocationsSection
+                    }
+                    // v1.4 Fase 2b: progress narration. Shows what Jarvis is
+                    // doing ("Søger på nettet…", "Claude tænker…") below the
+                    // last assistant bubble while we're awaiting a reply but
+                    // haven't started receiving streamed tokens yet.
+                    if chatSession.isStreaming, let step = chatSession.currentStep {
+                        ProgressNarrationRow(step: step)
+                            .padding(.horizontal, 4)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -332,7 +490,7 @@ struct ChatView: View {
             }
             .onChange(of: chatSession.messages.count) {
                 if let last = chatSession.messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(JarvisTheme.springSnappy) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
@@ -345,32 +503,34 @@ struct ChatView: View {
         }
     }
 
+    /// v1.4 Fase 2c: centred greeting, matches the Gemini macOS reference.
+    /// The sub-line is drawn from `GreetingProvider`'s 200-line rotating
+    /// library — a new one picks every time the empty-state appears so the
+    /// app never feels scripted.
     private var emptyState: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 28, weight: .regular))
-                .foregroundStyle(JarvisTheme.accent)
-                .shadow(color: JarvisTheme.accent.opacity(0.4), radius: 6)
-                .padding(.top, 30)
-            Text("Hvordan kan jeg hjælpe?")
-                .font(.system(size: 17, weight: .medium))
+        let pair = GreetingProvider.random(name: Self.greetingName)
+        return VStack(spacing: 0) {
+            Spacer(minLength: 40)
+            JarvisWordmark()
+                .padding(.bottom, 28)
+            Text(pair.hello)
+                .font(.system(size: 32, weight: .regular, design: .rounded))
                 .foregroundStyle(JarvisTheme.textPrimary)
-
-            if commandRouter != nil, !availableModes.isEmpty {
-                modeQuickStartGrid
-            } else {
-                VStack(spacing: 6) {
-                    chip("Opsummer et dokument for mig")
-                    chip("Hvad sker der i nyhederne i dag?")
-                    chip("Hjælp mig med at skrive en mail")
-                }
+            Text(pair.line)
+                .font(.system(size: 24, weight: .regular, design: .rounded))
+                .foregroundStyle(JarvisTheme.textPrimary.opacity(0.9))
+                .multilineTextAlignment(.center)
                 .padding(.top, 6)
-            }
+                .padding(.horizontal, 40)
+            Spacer(minLength: 30)
         }
-        .padding(.vertical, 24)
-        .padding(.horizontal, 24)
         .frame(maxWidth: .infinity)
     }
+
+    /// Name shown in the greeting. Per user preference (2026-04-19), the
+    /// default nickname is just "P" — short, personal, Jarvis-feel. Future:
+    /// expose this as a Settings string so other users can set their own.
+    private static var greetingName: String { "P" }
 
     private var modeQuickStartGrid: some View {
         // Show up to 6 modes in a 3-column grid — gives a glanceable

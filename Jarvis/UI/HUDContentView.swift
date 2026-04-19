@@ -36,6 +36,14 @@ struct HUDContentView: View {
     var currentConversationID: UUID?
     var onLoadConversation: ((UUID) -> Void)?
     var onDeleteConversation: ((UUID) -> Void)?
+    /// v1.3 hover-pause: wired from AppDelegate → HUDWindowController.onHoverChanged.
+    /// Called true on pointer-enter and false on leave over the non-chat HUD card
+    /// so the auto-close timer can be paused while the user is still reading.
+    var onHoverChanged: ((Bool) -> Void)?
+    /// v1.4 Fase 2b.5: optional retry callback for the error card. When nil,
+    /// the error view hides the "Prøv igen" button. Set by HUDWindowController
+    /// when `showError(_:retryHandler:)` is called with a non-nil handler.
+    var onErrorRetry: (() -> Void)?
 
     @State private var appeared = false
 
@@ -61,12 +69,22 @@ struct HUDContentView: View {
                 }
                 .padding(Constants.HUD.padding)
                 .frame(width: Constants.HUD.width)
-                .jarvisHUDBackground()
+                // v1.4 Fase 2c: Q&A / recording / result HUD now wears the
+                // chat-family backdrop (navy gradient + material) so the
+                // corner panel reads as part of the same visual system as
+                // the chat window.
+                .jarvisChatBackdrop()
+                .onHover { hovering in onHoverChanged?(hovering) }
             }
         }
         .scaleEffect(appeared ? 1 : Constants.Animation.appearScaleFrom)
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : Constants.Animation.appearOffsetFrom)
+        // v1.4 Fase 2a: bound Dynamic Type at the HUD root so Accessibility
+        // → Larger Text stays readable without overflowing the 380pt-wide
+        // corner panel. The cap at .xLarge (≈130%) is a tested safe zone;
+        // past that the waveform strip + transcript start colliding.
+        .dynamicTypeSize(.xSmall ... .xLarge)
         // NB: intentionally NO implicit animation on state.currentPhase here.
         // An implicit animation there caused SwiftUI to fade the old subview out
         // and the new one in, leaving a zero-opacity gap so users sometimes
@@ -130,7 +148,7 @@ struct HUDContentView: View {
     private func recordingView(elapsed: TimeInterval) -> some View {
         let remaining = max(0, Constants.maxRecordingDuration - elapsed)
         return VStack(alignment: .leading, spacing: 10) {
-            // Header: indicator + mode name + countdown
+            // Header: indicator + mode name + Whisper badge + countdown
             HStack(spacing: 10) {
                 HALEyeView(
                     progress: min(elapsed / Constants.maxRecordingDuration, 1.0),
@@ -138,8 +156,11 @@ struct HUDContentView: View {
                     levelMonitor: audioLevel
                 )
                 Text(activeModeName.isEmpty ? Constants.displayName : activeModeName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(JarvisTheme.textPrimary)
+                if state.localSTTReady {
+                    whisperBadge
+                }
                 Spacer()
                 Text(formatTime(remaining))
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -157,7 +178,7 @@ struct HUDContentView: View {
                         .transition(.opacity)
                 } else {
                     Text(speechService.transcript)
-                        .font(.system(size: 14))
+                        .font(.body)
                         .foregroundStyle(JarvisTheme.textPrimary)
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -169,8 +190,30 @@ struct HUDContentView: View {
             // Prominent waveform — the visual emphasis of the recording HUD
             WaveformScope(buffer: waveform, height: 72)
         }
-        .animation(.easeInOut(duration: 0.2), value: audioLevel.isSilent)
-        .animation(.easeInOut(duration: 0.2), value: speechService.transcript.isEmpty)
+        .animation(JarvisTheme.springSnappy, value: audioLevel.isSilent)
+        .animation(JarvisTheme.springSnappy, value: speechService.transcript.isEmpty)
+    }
+
+    /// "On-device" badge rendered next to the mode name while recording. Only
+    /// visible when the Whisper model is loaded — during the ~5s cold-start
+    /// it's hidden, making the transition from "Gemini STT" to "local STT"
+    /// visually clear.
+    private var whisperBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "waveform.path")
+                .font(.system(size: 9, weight: .semibold))
+            Text("Whisper")
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+        }
+        .foregroundStyle(JarvisTheme.accent)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            Capsule(style: .continuous)
+                .fill(JarvisTheme.accent.opacity(0.15))
+                .overlay(Capsule().stroke(JarvisTheme.accent.opacity(0.4), lineWidth: 0.5))
+        )
+        .accessibilityLabel("Whisper aktiv, offline transkription")
     }
 
     // MARK: - Processing
@@ -181,10 +224,17 @@ struct HUDContentView: View {
                 ProgressView()
                     .controlSize(.small)
                     .tint(JarvisTheme.accent)
-                Text("Behandler…")
-                    .font(.system(size: 13, weight: .semibold))
+                Text(state.currentStep?.displayText ?? "Behandler…")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(JarvisTheme.textPrimary)
+                    .animation(JarvisTheme.springSnappy, value: state.currentStep)
                 Spacer()
+                if let step = state.currentStep {
+                    Image(systemName: step.icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(JarvisTheme.accent.opacity(0.75))
+                        .transition(.opacity)
+                }
             }
             if !speechService.transcript.isEmpty {
                 Text(speechService.transcript)
@@ -199,14 +249,11 @@ struct HUDContentView: View {
     // MARK: - Result
 
     private func resultView(text: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(JarvisTheme.accent)
-                    .frame(width: 8, height: 8)
-                Text(Constants.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(JarvisTheme.textPrimary)
+        VStack(alignment: .leading, spacing: 12) {
+            // v1.4 Fase 2c: chat-family header — tiny wordmark leading,
+            // slim icon cluster trailing. Replaces the dot+text header.
+            HStack(alignment: .center, spacing: 8) {
+                JarvisWordmark(fontSize: 12)
                 Spacer()
                 iconButton(system: state.isPinned ? "pin.fill" : "pin",
                            active: state.isPinned, help: state.isPinned ? "Unpin" : "Pin") {
@@ -217,9 +264,6 @@ struct HUDContentView: View {
                 }
                 iconButton(system: "xmark", help: "Luk", action: onClose)
             }
-            Rectangle()
-                .fill(JarvisTheme.hairline)
-                .frame(height: 1)
 
             // Rules:
             // - Short answers flow naturally — HUD grows to fit.
@@ -264,7 +308,7 @@ struct HUDContentView: View {
                 Image(systemName: "exclamationmark.circle.fill")
                     .foregroundStyle(JarvisTheme.criticalGlow)
                 Text("Fejl")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(JarvisTheme.textPrimary)
                 Spacer()
                 iconButton(system: "xmark", help: "Luk", action: onClose)
@@ -273,6 +317,23 @@ struct HUDContentView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(JarvisTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let onErrorRetry {
+                Button {
+                    onErrorRetry()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Prøv igen")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(JarvisTheme.accent)
+                .controlSize(.small)
+                .padding(.top, 2)
+                .accessibilityHint("Kører den seneste kommando igen")
+            }
         }
     }
 
@@ -284,7 +345,7 @@ struct HUDContentView: View {
                 Image(systemName: "lock.fill")
                     .foregroundStyle(JarvisTheme.warningGlow)
                 Text("\(permission) kræves")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(JarvisTheme.textPrimary)
                 Spacer()
                 iconButton(system: "xmark", help: "Luk", action: onClose)
@@ -317,6 +378,9 @@ struct HUDContentView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        // `help` doubles as the VoiceOver label so screen readers don't
+        // announce "Button" — announce "Luk" / "Pin" / "Læs op" instead.
+        .accessibilityLabel(help)
     }
 
     private func formatTime(_ time: TimeInterval) -> String {

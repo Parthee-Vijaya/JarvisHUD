@@ -10,6 +10,10 @@ class RecordingPipeline {
     private let hudController: HUDWindowController
     private let ttsService: TTSService
     private let modeManager: ModeManager
+    /// v1.3: local speech-to-text via WhisperKit (when the SPM package is
+    /// wired up) or a no-op fallback otherwise. When `isReady` is false the
+    /// pipeline silently uses the legacy Gemini audio path.
+    private let localTranscriber: any LocalTranscriber
 
     // MARK: - Pipeline State
     private var recordingState: RecordingState = .idle
@@ -28,7 +32,8 @@ class RecordingPipeline {
         permissions: PermissionsManager,
         hudController: HUDWindowController,
         ttsService: TTSService,
-        modeManager: ModeManager
+        modeManager: ModeManager,
+        localTranscriber: (any LocalTranscriber)? = nil
     ) {
         self.audioCapture = audioCapture
         self.geminiClient = geminiClient
@@ -38,9 +43,25 @@ class RecordingPipeline {
         self.hudController = hudController
         self.ttsService = ttsService
         self.modeManager = modeManager
+        self.localTranscriber = localTranscriber ?? LocalTranscribers.makeDefault()
 
         setupHUDCallbacks()
         checkCrashRecovery()
+
+        // Kick off model preload in the background so the first real
+        // transcription doesn't wait for ANE compilation. If WhisperKit isn't
+        // wired up, `preload()` is a no-op on the NoOp transcriber. Errors
+        // are logged, not swallowed — we'd rather see a failed preload in
+        // jarvis.log than silently fall back to the Gemini audio path forever.
+        Task { [transcriber = self.localTranscriber, hud = self.hudController] in
+            do {
+                try await transcriber.preload()
+                let ready = await transcriber.isReady
+                await MainActor.run { hud.hudState.localSTTReady = ready }
+            } catch {
+                LoggingService.shared.log("LocalTranscriber preload failed, falling back to Gemini audio: \(error)", level: .error)
+            }
+        }
     }
 
     // MARK: - Public API
@@ -178,24 +199,115 @@ class RecordingPipeline {
     // MARK: - Processing
 
     private func processRecording(audioData: Data, screenshot: Data?, mode: Mode) async {
+        // v1.3 two-path flow.
+        //
+        // Paste-output modes (Dictation / VibeCode / Professional / Translate):
+        // try local Whisper first. If the user wants text at their cursor,
+        // WhisperKit-tiny's occasional tyde-fejl is recoverable (they can
+        // proofread) and the latency saved is huge.
+        //
+        // HUD-output modes (Q&A / Vision) ALWAYS go through Gemini audio.
+        // Gemini's built-in STT is far better than whisper-tiny, and a bad
+        // local transcript here cascades into web-search hits on the wrong
+        // query → refuse-to-answer failures. This preserves v1.2 behaviour
+        // for those modes.
         let result: Result<String, Error>
+        let preferLocal = mode.outputType == .paste
 
-        if let screenshot {
-            result = await geminiClient.sendAudioWithImage(audioData, imageData: screenshot, mode: mode)
+        if preferLocal, let text = await transcribeLocally(audioData), !text.isEmpty {
+            LoggingService.shared.log("Local transcript (\(text.count) chars) [\(mode.name)]: \(text.prefix(80))…")
+            result = await callModel(prompt: text, screenshot: screenshot, mode: mode, transport: "text-after-local-stt")
         } else {
-            result = await geminiClient.sendAudio(audioData, mode: mode)
+            if preferLocal {
+                LoggingService.shared.log("Local STT unavailable or empty — using Gemini audio [\(mode.name)]", level: .info)
+            }
+            result = await callModelWithAudio(audioData: audioData, screenshot: screenshot, mode: mode)
         }
 
         switch result {
         case .success(let text):
-            LoggingService.shared.log("Gemini response: \(text.prefix(100))...")
+            LoggingService.shared.log("Model response: \(text.prefix(100))...")
             deliverResult(text, mode: mode)
         case .failure(let error):
-            LoggingService.shared.log("Gemini error: \(error)", level: .error)
-            hudController.showError("Fejl: \(error.localizedDescription)")
+            LoggingService.shared.log("Model error: \(error)", level: .error)
+            // v1.4 Fase 2b.5: offer a retry handler on transient failures
+            // (network blips, server 5xx, timeout). Non-transient errors —
+            // missing API key, bad request, safety-block — don't get a
+            // retry button because replaying the same input won't help.
+            let retry = Self.isTransient(error) ? { [weak self, audioData, screenshot, mode] in
+                guard let self else { return }
+                Task { await self.processRecording(audioData: audioData, screenshot: screenshot, mode: mode) }
+            } : nil
+            hudController.showError("Fejl: \(error.localizedDescription)", retryHandler: retry)
         }
 
         resetPipeline()
+    }
+
+    /// Classify whether an error is worth retrying with the same input.
+    /// Mirrors the classifier in `GeminiClient.isTransientError` but widened
+    /// to Anthropic / URL / HTTP surfaces so the HUD retry button lights up
+    /// consistently across providers.
+    private static func isTransient(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            let transient = [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost,
+                             NSURLErrorNotConnectedToInternet, NSURLErrorCannotConnectToHost]
+            if transient.contains(ns.code) { return true }
+        }
+        if let rest = error as? GeminiRESTError,
+           case .httpError(let code, _) = rest,
+           (500..<600).contains(code) {
+            return true
+        }
+        return false
+    }
+
+    /// Run local STT if available. Returns nil when the transcriber isn't
+    /// ready, the audio is silent, or the engine threw — all of which fall
+    /// back to the legacy Gemini audio path. Emits a `.transcribe` metric
+    /// on both success and failure (via `MetricsService.time`).
+    private func transcribeLocally(_ audioData: Data) async -> String? {
+        guard await localTranscriber.isReady else { return nil }
+        hudController.setStep(ProcessingStep.Kind.transcribing(transport: "local-whisper"))
+        do {
+            let text = try await MetricsService.shared.time(.transcribe, transport: "local-whisper") {
+                try await self.localTranscriber.transcribe(audioData: audioData, language: "da")
+            }
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+        } catch {
+            LoggingService.shared.log("Local transcribe failed, falling back to Gemini audio: \(error)", level: .warning)
+            return nil
+        }
+    }
+
+    /// Text-to-model call (used after local STT succeeded). Timing wrapped
+    /// through `MetricsService.time` so `modelCall` latency is recorded
+    /// identically on success + failure.
+    private func callModel(prompt: String, screenshot: Data?, mode: Mode, transport: String) async -> Result<String, Error> {
+        hudController.setStep(mode.webSearch ? ProcessingStep.Kind.searchingWeb(query: prompt) : ProcessingStep.Kind.thinking(provider: "Gemini"))
+        return await MetricsService.shared.time(.modelCall, mode: mode.name, transport: transport) {
+            if let screenshot {
+                return await self.geminiClient.sendTextWithImage(prompt: prompt, mode: mode, imageData: screenshot)
+            } else {
+                return await self.geminiClient.sendText(prompt: prompt, mode: mode)
+            }
+        }
+    }
+
+    /// Legacy path: audio → Gemini (Gemini transcribes internally). Retained
+    /// as a fallback for when WhisperKit isn't loaded yet. Emits the same
+    /// `.modelCall` metric tagged `gemini-audio` so we can compare the two
+    /// transports directly in the histogram.
+    private func callModelWithAudio(audioData: Data, screenshot: Data?, mode: Mode) async -> Result<String, Error> {
+        hudController.setStep(ProcessingStep.Kind.transcribing(transport: "gemini-audio"))
+        return await MetricsService.shared.time(.modelCall, mode: mode.name, transport: "gemini-audio") {
+            if let screenshot {
+                return await self.geminiClient.sendAudioWithImage(audioData, imageData: screenshot, mode: mode)
+            } else {
+                return await self.geminiClient.sendAudio(audioData, mode: mode)
+            }
+        }
     }
 
     // MARK: - Result Delivery
@@ -210,6 +322,12 @@ class RecordingPipeline {
             } else {
                 LoggingService.shared.log("Text insertion failed, showing in HUD", level: .warning)
                 hudController.showResult(text)
+            }
+            // v1.3: Dictation (and any future mode that opts in) also writes
+            // the transcription to the clipboard AND Notes.app so there's a
+            // persistent record. Fire-and-forget — shouldn't delay the paste.
+            if mode.persistToNotes {
+                DictationPersistence.save(text)
             }
         case .hud:
             LoggingService.shared.log("→ HUD showResult (\(text.prefix(80))...)")
@@ -271,6 +389,7 @@ class RecordingPipeline {
         onStateChanged?(.idle)
         activePipelineMode = nil
         pendingScreenshot = nil
+        hudController.setStep(ProcessingStep.Kind?.none)
         clearPipelineState()
     }
 }

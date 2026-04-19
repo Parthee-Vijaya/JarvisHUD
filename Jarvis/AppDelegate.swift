@@ -76,6 +76,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // and register their tools with the shared agent registry. Runs in
             // the background — we don't block app launch if a server is slow.
             Task { await MCPRegistry.shared.bootstrap() }
+            // v1.4 Fase 4 slice: register ourselves as a services-menu
+            // provider so "Ask Jarvis about this" appears in every app's
+            // Services submenu for selected text. The Info.plist NSServices
+            // array advertises the action; this call tells AppKit we're
+            // ready to handle it.
+            NSApplication.shared.servicesProvider = self
+            NSUpdateDynamicServices()
             // v1.2.0: ping GitHub Releases once a day to see if a newer
             // Jarvis DMG is published. Non-blocking; prompts only when a
             // higher semver is found.
@@ -87,6 +94,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             MCPRegistry.shared.shutdown()
+        }
+    }
+
+    // MARK: - Services menu (v1.4 Fase 4 slice)
+
+    /// Called by AppKit when the user picks "Ask Jarvis about this" from any
+    /// app's Services submenu. The `NSMessage` key in Info.plist maps this
+    /// selector; pasteboard contains the selected plain text.
+    ///
+    /// Behaviour: pull the text, route it through the chat as a Q&A-mode
+    /// prompt, and show the HUD. Matches the `open jarvis://qna?prompt=…`
+    /// URL scheme flow so the handling is unified.
+    @objc func askJarvisAboutSelection(_ pboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+        guard let text = pboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            LoggingService.shared.log("Services: empty pasteboard — nothing to ask", level: .warning)
+            return
+        }
+        LoggingService.shared.log("Services: ask Jarvis about \(text.count)-char selection")
+        // Reuse the same chat-opening path the ⌥C hotkey uses. Route through
+        // the chat command router in Q&A mode so web-search grounds the reply.
+        Task { @MainActor in
+            hudController.showChat()
+            await commandRouter?.run(mode: BuiltInModes.qna, input: text)
         }
     }
 
@@ -147,6 +178,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ask for on-device speech-recognition auth up front so the first ⌥Q
         // isn't interrupted by a permission prompt.
         Task { await hudController.speechService.requestAuthorization() }
+
+        // v1.4 Fase 2c: always ask for location on startup so Cockpit's
+        // weather / commute / sun tiles have fresh GPS-driven data without
+        // waiting for the user to open Info mode. No-op after the first
+        // grant (macOS dedupes repeat authorization requests).
+        locationService.requestAuthorization()
+        Task { _ = await locationService.refresh() }
 
         // Wire the Uptodate + Info panel data sources.
         hudController.updatesService = updatesService
@@ -210,7 +248,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             geminiClient: geminiClient,
             screenCapture: screenCapture,
             summaryService: summaryService,
-            chatSession: chatSession
+            chatSession: chatSession,
+            instantAnswers: InstantAnswerProvider(infoModeService: infoModeService)
         )
         commandRouter = router
         hudController.commandRouter = router

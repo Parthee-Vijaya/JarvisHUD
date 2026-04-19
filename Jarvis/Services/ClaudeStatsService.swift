@@ -14,6 +14,27 @@ struct ClaudeStatsSnapshot: Equatable {
         var id: String { label + "@" + String(lastUsed.timeIntervalSince1970) }
     }
 
+    struct ToolStat: Equatable, Identifiable {
+        let name: String
+        let count: Int
+        var id: String { name }
+    }
+
+    struct ModelStat: Equatable, Identifiable {
+        let name: String
+        let tokens: Int
+        let inputTokens: Int
+        let outputTokens: Int
+        let cacheReadTokens: Int
+        var id: String { name }
+
+        /// Cache-read share of total — how much of this model's usage was
+        /// served from warm context vs. fresh input.
+        var cacheRatio: Double {
+            tokens > 0 ? Double(cacheReadTokens) / Double(tokens) : 0
+        }
+    }
+
     let totalTokens: Int
     let totalSessions: Int
     let totalMessages: Int
@@ -35,6 +56,13 @@ struct ClaudeStatsSnapshot: Equatable {
     let totalActiveHours: Double
     /// Top 3 projects by most-recent modification time.
     let recentProjects: [ProjectStat]
+    /// Top tools used in the most-recently-modified session.
+    let latestSessionTools: [ToolStat]
+    /// Per-model split across all sessions — useful to see cache efficiency.
+    let modelBreakdown: [ModelStat]
+    /// Longest recorded session — from stats-cache `longestSession`.
+    let longestSessionMessages: Int
+    let longestSessionDate: Date?
 
     static let empty = ClaudeStatsSnapshot(
         totalTokens: 0, totalSessions: 0, totalMessages: 0,
@@ -42,7 +70,9 @@ struct ClaudeStatsSnapshot: Equatable {
         latestSessionModel: nil, latestSessionProject: nil,
         todayTokens: 0, weekTokens: 0,
         todayMessages: 0, todaySessions: 0, todayToolCalls: 0,
-        totalActiveHours: 0, recentProjects: []
+        totalActiveHours: 0, recentProjects: [],
+        latestSessionTools: [], modelBreakdown: [],
+        longestSessionMessages: 0, longestSessionDate: nil
     )
 }
 
@@ -72,7 +102,11 @@ actor ClaudeStatsService {
             todaySessions: todayAct.sessions,
             todayToolCalls: todayAct.toolCalls,
             totalActiveHours: activeHours,
-            recentProjects: projects
+            recentProjects: projects,
+            latestSessionTools: latest.toolCalls,
+            modelBreakdown: cache.modelBreakdown,
+            longestSessionMessages: cache.longestSessionMessages,
+            longestSessionDate: cache.longestSessionDate
         )
     }
 
@@ -87,6 +121,11 @@ actor ClaudeStatsService {
         var dailyTokens: [String: Int]  // date (yyyy-MM-dd) -> sum across models
         var dailyActivity: [String: DayActivity]
         var totalTokensAllTime: Int
+        // v1.2.1: new surfaces for the Cockpit tile
+        var modelBreakdown: [ClaudeStatsSnapshot.ModelStat]
+        var longestSessionMessages: Int
+        var longestSessionDate: Date?
+
         var sortedDescending: [(String, Int)] {
             dailyTokens.sorted { $0.key > $1.key }
         }
@@ -108,7 +147,8 @@ actor ClaudeStatsService {
         guard let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return StatsCache(totalSessions: 0, totalMessages: 0, firstSessionDate: nil,
-                              dailyTokens: [:], dailyActivity: [:], totalTokensAllTime: 0)
+                              dailyTokens: [:], dailyActivity: [:], totalTokensAllTime: 0,
+                              modelBreakdown: [], longestSessionMessages: 0, longestSessionDate: nil)
         }
 
         let totalSessions = (root["totalSessions"] as? Int) ?? 0
@@ -142,13 +182,35 @@ actor ClaudeStatsService {
         }
 
         // All-time total: sum modelUsage fields (includes cache + I/O).
+        // At the same time, build the per-model breakdown for the Cockpit tile.
         var total = 0
+        var modelBreakdown: [ClaudeStatsSnapshot.ModelStat] = []
         if let models = root["modelUsage"] as? [String: [String: Any]] {
-            for (_, counts) in models {
-                let fields = ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"]
-                for field in fields {
-                    total += (counts[field] as? Int) ?? 0
-                }
+            for (model, counts) in models {
+                let input = (counts["inputTokens"] as? Int) ?? 0
+                let output = (counts["outputTokens"] as? Int) ?? 0
+                let cacheRead = (counts["cacheReadInputTokens"] as? Int) ?? 0
+                let cacheCreate = (counts["cacheCreationInputTokens"] as? Int) ?? 0
+                let modelTotal = input + output + cacheRead + cacheCreate
+                total += modelTotal
+                modelBreakdown.append(ClaudeStatsSnapshot.ModelStat(
+                    name: model,
+                    tokens: modelTotal,
+                    inputTokens: input,
+                    outputTokens: output,
+                    cacheReadTokens: cacheRead
+                ))
+            }
+            modelBreakdown.sort { $0.tokens > $1.tokens }
+        }
+
+        // Longest session — from `longestSession` top-level object.
+        var longestMessages = 0
+        var longestDate: Date?
+        if let longest = root["longestSession"] as? [String: Any] {
+            longestMessages = (longest["messageCount"] as? Int) ?? 0
+            if let iso = longest["timestamp"] as? String {
+                longestDate = Self.parseDate(iso)
             }
         }
 
@@ -158,7 +220,10 @@ actor ClaudeStatsService {
             firstSessionDate: firstDate,
             dailyTokens: daily,
             dailyActivity: activity,
-            totalTokensAllTime: total
+            totalTokensAllTime: total,
+            modelBreakdown: modelBreakdown,
+            longestSessionMessages: longestMessages,
+            longestSessionDate: longestDate
         )
     }
 
@@ -260,6 +325,7 @@ actor ClaudeStatsService {
         var totalTokens: Int
         var model: String?
         var projectLabel: String?
+        var toolCalls: [ClaudeStatsSnapshot.ToolStat]
     }
 
     private func findAndSumLatestSession() async -> LatestSession {
@@ -270,7 +336,7 @@ actor ClaudeStatsService {
             at: projectsDir, includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return LatestSession(totalTokens: 0, model: nil, projectLabel: nil)
+            return LatestSession(totalTokens: 0, model: nil, projectLabel: nil, toolCalls: [])
         }
 
         // Walk each project dir, collect all JSONL files with their mtime.
@@ -289,43 +355,68 @@ actor ClaudeStatsService {
         }
 
         guard let newest = candidates.max(by: { $0.mtime < $1.mtime }) else {
-            return LatestSession(totalTokens: 0, model: nil, projectLabel: nil)
+            return LatestSession(totalTokens: 0, model: nil, projectLabel: nil, toolCalls: [])
         }
 
-        let (total, model) = await parseJSONLUsage(url: newest.url)
-        return LatestSession(totalTokens: total, model: model, projectLabel: newest.projectLabel)
+        let parsed = await parseJSONLUsage(url: newest.url)
+        return LatestSession(
+            totalTokens: parsed.tokens,
+            model: parsed.model,
+            projectLabel: newest.projectLabel,
+            toolCalls: parsed.toolCalls
+        )
     }
 
-    /// Sum all `message.usage` fields in a JSONL file and grab the most-recent model name.
-    private func parseJSONLUsage(url: URL) async -> (Int, String?) {
-        await withCheckedContinuation { (continuation: CheckedContinuation<(Int, String?), Never>) in
+    private struct JSONLUsageParse {
+        let tokens: Int
+        let model: String?
+        let toolCalls: [ClaudeStatsSnapshot.ToolStat]
+    }
+
+    /// Sum all `message.usage` fields in a JSONL file, grab the most-recent
+    /// model name, and tally `tool_use` blocks in `message.content` arrays.
+    /// v1.2.1: returns the top 5 tools so the Cockpit can render them.
+    private func parseJSONLUsage(url: URL) async -> JSONLUsageParse {
+        await withCheckedContinuation { (continuation: CheckedContinuation<JSONLUsageParse, Never>) in
             DispatchQueue.global(qos: .utility).async {
                 var total = 0
                 var latestModel: String?
-                guard let handle = try? FileHandle(forReadingFrom: url) else {
-                    continuation.resume(returning: (0, nil))
-                    return
-                }
-                defer { try? handle.close() }
+                var toolCounts: [String: Int] = [:]
 
-                // Read in reasonably-sized chunks and split on newlines.
-                let data = handle.readDataToEndOfFile()
-                guard let text = String(data: data, encoding: .utf8) else {
-                    continuation.resume(returning: (0, nil))
+                guard let data = try? Data(contentsOf: url),
+                      let text = String(data: data, encoding: .utf8) else {
+                    continuation.resume(returning: JSONLUsageParse(tokens: 0, model: nil, toolCalls: []))
                     return
                 }
                 for line in text.split(separator: "\n") {
-                    guard let lineData = line.data(using: .utf8) else { continue }
-                    guard let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
-                    guard let message = obj["message"] as? [String: Any] else { continue }
+                    guard let lineData = line.data(using: .utf8),
+                          let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                          let message = obj["message"] as? [String: Any] else { continue }
                     if let model = message["model"] as? String { latestModel = model }
-                    guard let usage = message["usage"] as? [String: Any] else { continue }
-                    let fields = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
-                    for field in fields {
-                        total += (usage[field] as? Int) ?? 0
+                    if let usage = message["usage"] as? [String: Any] {
+                        for field in ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"] {
+                            total += (usage[field] as? Int) ?? 0
+                        }
+                    }
+                    if let content = message["content"] as? [[String: Any]] {
+                        for block in content {
+                            if (block["type"] as? String) == "tool_use",
+                               let name = block["name"] as? String {
+                                toolCounts[name, default: 0] += 1
+                            }
+                        }
                     }
                 }
-                continuation.resume(returning: (total, latestModel))
+
+                let topTools = toolCounts
+                    .map { ClaudeStatsSnapshot.ToolStat(name: $0.key, count: $0.value) }
+                    .sorted { $0.count > $1.count }
+                    .prefix(5)
+                    .map { $0 }
+
+                continuation.resume(returning: JSONLUsageParse(
+                    tokens: total, model: latestModel, toolCalls: topTools
+                ))
             }
         }
     }

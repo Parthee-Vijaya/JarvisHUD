@@ -30,9 +30,15 @@ class ConversationStore {
     private let directory: URL
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        directory = appSupport.appendingPathComponent("Jarvis/conversations", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        directory = base.appendingPathComponent("Jarvis/conversations", isDirectory: true)
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            LoggingService.shared.log("ConversationStore: failed to create directory at \(directory.path): \(error)", level: .error)
+        }
     }
 
     // MARK: - Save
@@ -45,6 +51,22 @@ class ConversationStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(conversation)
             try data.write(to: url, options: .atomic)
+            // v1.4 Fase 3 slice: mirror into Spotlight so the conversation
+            // shows up in ⌘Space without opening Jarvis. Fire-and-forget on
+            // the main actor so a slow Spotlight callback doesn't block the
+            // save path.
+            Task { @MainActor in
+                SpotlightIndexer.shared.index(conversation)
+            }
+            // v1.4 Fase 3 semantic index: embed the first user message so
+            // future searches can find this conversation by topic, not just
+            // by title substring. Actor-isolated so the NLEmbedding call
+            // stays off the main thread.
+            if let firstUser = conversation.messages.first(where: { $0.role == .user })?.text {
+                Task {
+                    await SemanticIndex.shared.upsert(id: conversation.id, representativeText: firstUser)
+                }
+            }
         } catch {
             LoggingService.shared.log("Failed to save conversation: \(error)", level: .error)
         }
@@ -91,12 +113,24 @@ class ConversationStore {
     func delete(id: UUID) {
         let url = directory.appendingPathComponent("\(id.uuidString).json")
         try? FileManager.default.removeItem(at: url)
+        Task { @MainActor in
+            SpotlightIndexer.shared.remove(id: id)
+        }
+        Task {
+            await SemanticIndex.shared.remove(id: id)
+        }
     }
 
     func deleteAll() {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "json" {
             try? FileManager.default.removeItem(at: file)
+        }
+        Task { @MainActor in
+            SpotlightIndexer.shared.clearAll()
+        }
+        Task {
+            await SemanticIndex.shared.removeAll()
         }
     }
 
