@@ -1387,11 +1387,15 @@ struct InfoModeView: View {
         return "\(days)d siden"
     }
 
-    /// "620K / 1M" style string used inside the two-column infoRow.
+    /// "620K / 1M (62%)" style string. Percentages are capped at 999% in
+    /// the display — anything higher means the user's budget defaults
+    /// are below their actual usage, and showing "90809%" just reads as
+    /// broken. The bar still visualises the 100% clamp.
     private func budgetRow(used: Int, limit: Int) -> String {
         guard limit > 0 else { return formatTokens(used) }
         let pct = Int((Double(used) / Double(limit) * 100).rounded())
-        return "\(formatTokens(used)) / \(formatTokens(limit))  (\(pct)%)"
+        let pctLabel = pct > 999 ? ">999%" : "\(pct)%"
+        return "\(formatTokens(used)) / \(formatTokens(limit)) (\(pctLabel))"
     }
 
     private func budgetBar(label: String, used: Int, limit: Int) -> some View {
@@ -1401,30 +1405,33 @@ struct InfoModeView: View {
             if fraction >= 0.7 { return JarvisTheme.warningGlow }
             return Color.white
         }()
-        // Bar width is pinned to the outer panel minus padding/other columns —
-        // hardcoded to keep the hosting-controller's content size stable (see
-        // InfoModeView.body comment on why GeometryReader is banned here).
-        let barWidth: CGFloat = 640
+        // Width follows the parent tile — no hardcoded 640pt (which used
+        // to push the whole Sessioner tile past the panel's 960pt frame
+        // when the tile moved to half-width). GeometryReader is fine
+        // here because the parent tile is a leaf with an explicit
+        // maxWidth, so no layout-feedback loop.
         return VStack(alignment: .leading, spacing: 3) {
-            HStack {
+            HStack(spacing: 6) {
                 Text(label)
-                    .font(.footnote.weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.7))
-                Spacer()
+                Spacer(minLength: 4)
                 Text(budgetRow(used: used, limit: limit))
                     .font(.caption2.monospaced())
                     .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
             }
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(JarvisTheme.surfaceBase.opacity(0.8))
-                Capsule()
-                    .fill(barColor)
-                    .frame(width: barWidth * CGFloat(fraction))
-                    .shadow(color: barColor.opacity(0.6), radius: 3)
-                    .animation(JarvisTheme.spring, value: fraction)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(JarvisTheme.surfaceBase.opacity(0.8))
+                    Capsule()
+                        .fill(barColor)
+                        .frame(width: geo.size.width * CGFloat(fraction))
+                        .shadow(color: barColor.opacity(0.6), radius: 3)
+                        .animation(JarvisTheme.spring, value: fraction)
+                }
             }
-            .frame(maxWidth: barWidth, maxHeight: 6)
             .frame(height: 6)
         }
     }

@@ -72,6 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setupWakeWord()
             setupVoiceCommands()
             checkFirstLaunch()
+            migrateClaudeBudgetLimits()
             // v1.1.7: spawn any MCP servers the user declared in ~/.jarvis/mcp.json
             // and register their tools with the shared agent registry. Runs in
             // the background — we don't block app launch if a server is slow.
@@ -838,6 +839,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !hasLaunched {
             UserDefaults.standard.set(true, forKey: Constants.Defaults.hasLaunchedBefore)
             showOnboarding()
+        }
+    }
+
+    /// v1.4: Claude Code budget defaults jumped from 1 M / 5 M tokens to
+    /// 500 M / 2.5 B because cache-read is the dominant category and the
+    /// old numbers put the Cockpit bars at >90000% for a normal week. If
+    /// the stored value is still at the pre-bump tier, rewrite it to the
+    /// new default. Users who deliberately set a higher number keep theirs.
+    private func migrateClaudeBudgetLimits() {
+        let d = UserDefaults.standard
+        let dailyKey = Constants.Defaults.claudeDailyLimitTokens
+        let weeklyKey = Constants.Defaults.claudeWeeklyLimitTokens
+        let storedDaily = d.integer(forKey: dailyKey)
+        if storedDaily > 0, storedDaily < 10_000_000 {
+            d.set(Constants.ClaudeStats.defaultDailyLimit, forKey: dailyKey)
+        }
+        let storedWeekly = d.integer(forKey: weeklyKey)
+        if storedWeekly > 0, storedWeekly < 50_000_000 {
+            d.set(Constants.ClaudeStats.defaultWeeklyLimit, forKey: weeklyKey)
         }
     }
 

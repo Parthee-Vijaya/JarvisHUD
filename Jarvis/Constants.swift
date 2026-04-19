@@ -115,11 +115,15 @@ enum Constants {
 
     // MARK: - Claude Code defaults
     enum ClaudeStats {
-        /// Default daily budget shown in the Info panel when the user hasn't set one.
-        /// 1 M tokens is a rough placeholder for "an intense day".
-        static let defaultDailyLimit = 1_000_000
-        /// Default weekly budget. Free/Pro users can override in Settings.
-        static let defaultWeeklyLimit = 5_000_000
+        /// Default daily budget shown in the Info panel when the user hasn't
+        /// set one. Cache-read tokens dominate on agent-heavy days — 500 M
+        /// tokens/day is a defensible "hard working" baseline. Users on the
+        /// Claude Pro / Max / Team plans can bump this in Settings.
+        static let defaultDailyLimit = 500_000_000
+        /// Default weekly budget — 5 × daily. Anything above "week in the
+        /// weeds" territory lands over the 100% mark, which the bar clamps
+        /// to full + the text shows ">999%" instead of an alarming raw number.
+        static let defaultWeeklyLimit = 2_500_000_000
     }
 
 
