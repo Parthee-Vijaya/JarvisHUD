@@ -35,7 +35,7 @@ A dense, glanceable dashboard laid out in a navy-glass grid (`.regularMaterial` 
 | **Sol** | Sunrise, sunset, daylight length, solstice delta, next Danish holiday (Easter computed, rest fixed) | Pure Swift (`SolarDateMath`, `DanishHolidays`) |
 | **Luft & Måne** | AQI + UV bands · moon phase + illumination + next full moon | Open-Meteo + pure-Swift moon phase |
 | **Nyheder** | DR / Politiken / BBC / Guardian headlines | RSS feeds |
-| **Trafikinfo nær dig** | Live Vejdirektoratet events (accidents, animals, obstructions, weather, public events) within 50 km, classified by DATEX II type | Vejdirektoratet big-screen-events feed |
+| **Trafikinfo nær dig** | Live Vejdirektoratet events within 50 km, classified by DATEX II type, with per-row "for 2t 4m" chips + municipal reporter badges + a national-scope "Hele DK: 73 aktive · 23 dyr · 18 uheld · 18 hindringer" aggregate | Vejdirektoratet big-screen-events feed |
 | **Hjem / Rute** | Travel time, ETA, traffic delay, Tesla kWh + kr estimate, live-traffic link, destination weather, full-width zoomable map with charger overlays, motorvejsulykker on route | Apple Maps + Open-Meteo + adsb.lol + supercharge.info + OCM |
 | **System** | Battery, macOS version, hostname, uptime, chip | pmset, sw_vers, sysctl, ProcessInfo |
 | **Netværk** | Local IP, DNS, WiFi SSID, signal (dBm + quality), link rate | getifaddrs, scutil, WiFi framework |
@@ -43,8 +43,8 @@ A dense, glanceable dashboard laid out in a navy-glass grid (`.regularMaterial` 
 | **Handlinger** | Speedtest, LAN scan, WiFi quality + cumulative RX/TX bytes, Bluetooth status + connected devices | `networkQuality`, `arp`, `getifaddrs`, IOBluetooth |
 | **Fly over dig** | 3-4 nearest aircraft — origin → destination IATA pair, flight level, compass bearing from you, km distance | adsb.lol + adsbdb.com |
 | **Himmel** | Visible planets (Merkur/Venus/Mars/Jupiter/Saturn) with altitude/compass + ISS current subpoint with distance | Pure-Swift ephemeris + wheretheiss.at |
-| **Claude · Sessioner & Tokens** | I dag / I alt / Kørt / Siden + daily/weekly budgets with bars, længste session | `~/.claude/stats-cache.json` |
-| **Claude · Projekter & Modeller** | Seneste 3 projekter, top tools (latest session), per-model breakdown with cache-hit ratio | `~/.claude/projects/*/` JSONL |
+| **Claude · Sessioner & Tokens** | I dag / I alt / Kørt / Seneste / Siden + Daily + Weekly bars (capped at >999% when over), længste session | Live sweep of `~/.claude/projects/*/*.jsonl` (all 4 token types summed per day + per model; stats-cache.json used only for session counts + firstSessionDate because it lags a day) |
+| **Claude · Projekter & Modeller** | Seneste 3 projekter, top tools (wrapped in rows of 4), per-model breakdown with cache-hit ratio | Same live JSONL sweep |
 
 EV charger overlays on the commute map: Tesla Superchargers (via supercharge.info, no auth) + Clever (via Open Charge Map, optional API key in Settings).
 
