@@ -27,13 +27,13 @@ actor WhisperKitTranscriber: LocalTranscriber {
     /// launches load from cache in < 1 s.
     func preload() async throws {
         if whisper != nil { return }
-        LoggingService.shared.log("WhisperKit preload starting (model=openai_whisper-tiny)…")
+        let modelName = "openai_whisper-large-v3-v20240930_turbo_632MB"
+        LoggingService.shared.log("WhisperKit preload starting (model=\(modelName))…")
         let start = ContinuousClock.now
-        // Using `tiny` for the V2 rollout: fastest init + smallest download,
-        // covers dansk well enough for dictation. Swap to `openai_whisper-small`
-        // in Settings once the plumbing is proven.
+        // large-v3 turbo distillation — 632 MB, dansk kvalitet i top-klassen,
+        // ~1-2s transcription på M-series. User's machine handles it easily.
         let config = WhisperKitConfig(
-            model: "openai_whisper-tiny",
+            model: modelName,
             verbose: false,
             logLevel: .info,
             prewarm: true,
@@ -47,7 +47,7 @@ actor WhisperKitTranscriber: LocalTranscriber {
             let elapsed = ContinuousClock.now - start
             let seconds = Double(elapsed.components.seconds)
                 + Double(elapsed.components.attoseconds) / 1e18
-            LoggingService.shared.log(String(format: "WhisperKit ready in %.2fs (model=openai_whisper-tiny)", seconds))
+            LoggingService.shared.log(String(format: "WhisperKit ready in %.2fs (model=\(modelName))", seconds))
         } catch {
             LoggingService.shared.log("WhisperKit preload failed: \(error)", level: .error)
             throw error

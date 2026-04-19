@@ -197,16 +197,28 @@ class RecordingPipeline {
     // MARK: - Processing
 
     private func processRecording(audioData: Data, screenshot: Data?, mode: Mode) async {
-        // v1.3 two-path flow: try local Whisper first, fall back to Gemini-as-STT.
-        // When local works, we send TEXT (not audio) to Gemini for the Q&A /
-        // VibeCode / Professional / Vision cases — cheaper + faster.
-        let localTranscript = await transcribeLocally(audioData)
+        // v1.3 two-path flow.
+        //
+        // Paste-output modes (Dictation / VibeCode / Professional / Translate):
+        // try local Whisper first. If the user wants text at their cursor,
+        // WhisperKit-tiny's occasional tyde-fejl is recoverable (they can
+        // proofread) and the latency saved is huge.
+        //
+        // HUD-output modes (Q&A / Vision) ALWAYS go through Gemini audio.
+        // Gemini's built-in STT is far better than whisper-tiny, and a bad
+        // local transcript here cascades into web-search hits on the wrong
+        // query → refuse-to-answer failures. This preserves v1.2 behaviour
+        // for those modes.
         let result: Result<String, Error>
+        let preferLocal = mode.outputType == .paste
 
-        if let text = localTranscript, !text.isEmpty {
-            LoggingService.shared.log("Local transcript (\(text.count) chars): \(text.prefix(80))…")
+        if preferLocal, let text = await transcribeLocally(audioData), !text.isEmpty {
+            LoggingService.shared.log("Local transcript (\(text.count) chars) [\(mode.name)]: \(text.prefix(80))…")
             result = await callModel(prompt: text, screenshot: screenshot, mode: mode, transport: "text-after-local-stt")
         } else {
+            if preferLocal {
+                LoggingService.shared.log("Local STT unavailable or empty — using Gemini audio [\(mode.name)]", level: .info)
+            }
             result = await callModelWithAudio(audioData: audioData, screenshot: screenshot, mode: mode)
         }
 
