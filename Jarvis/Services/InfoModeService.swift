@@ -33,6 +33,15 @@ final class InfoModeService {
     /// (custom destination mode). Capped at 6 to keep the tile compact.
     private(set) var trafficEvents: [TrafficEvent] = []
     private(set) var trafficEventsScope: TrafficScope = .nearby
+    /// Full-country active-event count from the most recent feed fetch.
+    /// Useful for the Trafikinfo tile to show "47 aktive hændelser i DK"
+    /// below the per-row nearby list.
+    private(set) var trafficEventsTotalCount: Int = 0
+    /// Category breakdown of the full-country feed — ordered by count.
+    /// The tile renders a small summary line like "15 uheld · 23 dyr · 19
+    /// hindringer" so the user has national context without opening the
+    /// Vejdirektoratet map.
+    private(set) var trafficEventsCountByCategory: [(TrafficEvent.Category, Int)] = []
     private(set) var systemInfo: SystemInfoSnapshot = SystemInfoSnapshot()
     private(set) var claudeStats: ClaudeStatsSnapshot = .empty
     private(set) var airQuality: AirQualitySnapshot?
@@ -423,8 +432,20 @@ final class InfoModeService {
     }
 
     /// Decide which filter to apply based on whether a custom route is
-    /// active and we have a polyline to buffer against.
+    /// active and we have a polyline to buffer against. Also snapshots
+    /// the national-level aggregate so the Trafikinfo tile can show
+    /// Denmark-wide context under the nearby list.
     private func applyTrafficFilter(events: [TrafficEvent]) async {
+        // National aggregate — keep a running total + a category
+        // breakdown so the tile can render a one-liner like
+        // "DK: 47 aktive · 15 uheld · 23 dyr · 9 hindringer".
+        self.trafficEventsTotalCount = events.count
+        var counts: [TrafficEvent.Category: Int] = [:]
+        for e in events { counts[e.category, default: 0] += 1 }
+        self.trafficEventsCountByCategory = counts
+            .sorted { $0.value > $1.value }
+            .map { ($0.key, $0.value) }
+
         if let commute, !commute.routeCoordinates.isEmpty, customDestinationAddress != nil {
             let filtered = events.alongRoute(commute.routeCoordinates, bufferKm: 1.0)
             self.trafficEvents = Array(filtered.prefix(6))

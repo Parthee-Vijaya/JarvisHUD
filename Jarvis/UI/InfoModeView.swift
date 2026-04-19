@@ -170,15 +170,16 @@ struct InfoModeView: View {
         tile(title: trafficTileTitle, icon: "exclamationmark.triangle.fill") {
             if !service.trafficEvents.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    ForEach(service.trafficEvents.prefix(3)) { event in
-                        trafficEventRow(event)
+                    ForEach(service.trafficEvents.prefix(4)) { event in
+                        trafficInfoRow(event)
                     }
-                    if service.trafficEvents.count > 3 {
-                        Text("+\(service.trafficEvents.count - 3) flere")
+                    if service.trafficEvents.count > 4 {
+                        Text("+\(service.trafficEvents.count - 4) flere i nærheden")
                             .font(.caption2)
                             .foregroundStyle(Color.white.opacity(0.5))
                     }
-                    Text("Kilde: Vejdirektoratet")
+                    trafficNationalSummary
+                    Text("Kilde: Vejdirektoratet · opdateres ~10 min")
                         .font(.caption2)
                         .foregroundStyle(Color.white.opacity(0.4))
                         .padding(.top, 2)
@@ -190,13 +191,95 @@ struct InfoModeView: View {
                          : "Ingen aktuelle hændelser i nærheden.")
                         .font(.caption)
                         .foregroundStyle(Color.white.opacity(0.65))
-                    Text("Kilde: Vejdirektoratet")
+                    trafficNationalSummary
+                    Text("Kilde: Vejdirektoratet · opdateres ~10 min")
                         .font(.caption2)
                         .foregroundStyle(Color.white.opacity(0.4))
                 }
             } else {
                 placeholder("Henter trafikinfo…")
             }
+        }
+    }
+
+    /// Variant of `trafficEventRow` tailored for the tall Trafikinfo tile —
+    /// adds a relative-time chip ("for 2t 4m") under the header so the user
+    /// can tell stale events from fresh ones at a glance, plus a muted
+    /// kommune badge when the reporting body isn't the default
+    /// Vejdirektoratet.
+    private func trafficInfoRow(_ event: TrafficEvent) -> some View {
+        Button {
+            if let url = URL(string: "https://trafikkort.vejdirektoratet.dk/index.html") {
+                NSWorkspace.shared.open(url)
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: event.category.icon)
+                    .font(.caption)
+                    .foregroundStyle(trafficEventColor(event.category))
+                    .frame(width: 14, alignment: .center)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(event.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.95))
+                        if let ago = event.timeAgoLabel() {
+                            Text("· \(ago)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.55))
+                        }
+                    }
+                    if !event.header.isEmpty {
+                        Text(event.header)
+                            .font(.caption2)
+                            .foregroundStyle(Color.white.opacity(0.7))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    if let kommuneLabel = trafficKommuneLabel(event) {
+                        Text(kommuneLabel)
+                            .font(.caption2)
+                            .foregroundStyle(Color.white.opacity(0.5))
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(event.plainDescription.isEmpty ? event.header : event.plainDescription)
+    }
+
+    /// Skip the default "Vejdirektoratet" label — that's 95% of events and
+    /// the source footer already credits them. Show only municipal ones.
+    private func trafficKommuneLabel(_ event: TrafficEvent) -> String? {
+        let k = event.kommune.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty, k != "Vejdirektoratet" else { return nil }
+        return "Rapporteret af \(k) kommune"
+    }
+
+    /// National-scope aggregate underneath the per-row list. Reads
+    /// directly off the service's snapshot — no extra fetch.
+    @ViewBuilder
+    private var trafficNationalSummary: some View {
+        if service.trafficEventsTotalCount > 0 {
+            let total = service.trafficEventsTotalCount
+            let topCats = service.trafficEventsCountByCategory.prefix(3)
+            let breakdown = topCats
+                .map { "\($0.1) \($0.0.label.lowercased())" }
+                .joined(separator: " · ")
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Hele DK: \(total) aktive hændelser")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                if !breakdown.isEmpty {
+                    Text(breakdown)
+                        .font(.caption2)
+                        .foregroundStyle(Color.white.opacity(0.6))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.top, 4)
         }
     }
 

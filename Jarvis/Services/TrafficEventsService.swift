@@ -51,6 +51,35 @@ struct TrafficEvent: Identifiable, Equatable, Hashable, Sendable {
         let b = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         return a.distance(from: b) / 1000
     }
+
+    /// Parsed `beginPeriod` as an actual `Date`. The upstream feed carries
+    /// strings like `"18-04-2026 kl. 21:45"` (Danish local time); we parse
+    /// once per access and cache nothing because the UI only asks on render.
+    var beginDate: Date? {
+        Self.beginDateFormatter.date(from: beginPeriod)
+    }
+
+    /// "for 2t 4m" / "for 12m" / "netop nu" — relative to `now`. Returns
+    /// nil when we can't parse `beginPeriod`.
+    func timeAgoLabel(now: Date = Date()) -> String? {
+        guard let date = beginDate else { return nil }
+        let seconds = Int(now.timeIntervalSince(date))
+        if seconds < 60 { return "netop nu" }
+        if seconds < 3_600 { return "for \(seconds / 60)m" }
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        if hours < 24 { return minutes == 0 ? "for \(hours)t" : "for \(hours)t \(minutes)m" }
+        let days = hours / 24
+        return "for \(days)d"
+    }
+
+    private static let beginDateFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "dd-MM-yyyy 'kl.' HH:mm"
+        df.locale = Locale(identifier: "da_DK")
+        df.timeZone = TimeZone(identifier: "Europe/Copenhagen")
+        return df
+    }()
 }
 
 enum TrafficEventsError: LocalizedError {
