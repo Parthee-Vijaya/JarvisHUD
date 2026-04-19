@@ -113,6 +113,7 @@ struct ChatCommandBar: View {
             .buttonStyle(.plain)
             .disabled(isTranscribing)
             .help(micHelp)
+            .accessibilityLabel(micHelp)
         }
     }
 
@@ -202,6 +203,7 @@ struct ChatCommandBar: View {
             }
             .buttonStyle(.plain)
             .help("Vælg dokument")
+            .accessibilityLabel("Vælg dokument og send")
 
         case .screenshot:
             Button(action: performSubmit) {
@@ -212,6 +214,7 @@ struct ChatCommandBar: View {
             .buttonStyle(.plain)
             .disabled(chatSession.isStreaming)
             .help("Tag skærmbillede og spørg")
+            .accessibilityLabel("Tag skærmbillede og send")
 
         case .text, .voice:
             Button(action: performSubmit) {
@@ -223,6 +226,7 @@ struct ChatCommandBar: View {
             .disabled(!canSubmit)
             .keyboardShortcut(.return, modifiers: [])
             .help("Send")
+            .accessibilityLabel("Send besked")
         }
     }
 

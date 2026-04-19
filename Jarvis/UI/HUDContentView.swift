@@ -350,6 +350,9 @@ struct HUDContentView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        // `help` doubles as the VoiceOver label so screen readers don't
+        // announce "Button" — announce "Luk" / "Pin" / "Læs op" instead.
+        .accessibilityLabel(help)
     }
 
     private func formatTime(_ time: TimeInterval) -> String {
