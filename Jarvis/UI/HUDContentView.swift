@@ -36,6 +36,10 @@ struct HUDContentView: View {
     var currentConversationID: UUID?
     var onLoadConversation: ((UUID) -> Void)?
     var onDeleteConversation: ((UUID) -> Void)?
+    /// v1.3 hover-pause: wired from AppDelegate → HUDWindowController.onHoverChanged.
+    /// Called true on pointer-enter and false on leave over the non-chat HUD card
+    /// so the auto-close timer can be paused while the user is still reading.
+    var onHoverChanged: ((Bool) -> Void)?
 
     @State private var appeared = false
 
@@ -62,6 +66,7 @@ struct HUDContentView: View {
                 .padding(Constants.HUD.padding)
                 .frame(width: Constants.HUD.width)
                 .jarvisHUDBackground()
+                .onHover { hovering in onHoverChanged?(hovering) }
             }
         }
         .scaleEffect(appeared ? 1 : Constants.Animation.appearScaleFrom)

@@ -6,6 +6,9 @@ class HUDWindowController {
     private var panel: NSPanel?
     private var autoCloseTask: Task<Void, Never>?
     private var recordingTimerTask: Task<Void, Never>?
+    /// Remembered so hover-leave can restart the timer with the same budget
+    /// the caller originally requested (confirmation=3s, result=30s, error=10s).
+    private var lastAutoCloseSeconds: TimeInterval?
     let hudState = HUDState()
     let audioLevel = AudioLevelMonitor()
     let waveform = WaveformBuffer()
@@ -145,6 +148,7 @@ class HUDWindowController {
     func close() {
         cancelAutoClose()
         cancelRecordingTimer()
+        lastAutoCloseSeconds = nil
         panel?.close()
         panel = nil
         hudState.isVisible = false
@@ -189,7 +193,8 @@ class HUDWindowController {
             conversationHistory: conversationHistory,
             currentConversationID: currentConversationID,
             onLoadConversation: onLoadConversation != nil ? { [weak self] id in self?.onLoadConversation?(id) } : nil,
-            onDeleteConversation: onDeleteConversation != nil ? { [weak self] id in self?.onDeleteConversation?(id) } : nil
+            onDeleteConversation: onDeleteConversation != nil ? { [weak self] id in self?.onDeleteConversation?(id) } : nil,
+            onHoverChanged: { [weak self] hovering in self?.onHoverChanged(hovering) }
         )
     }
 
@@ -406,10 +411,26 @@ class HUDWindowController {
     /// persists its frame. Safe to delete once all callers are updated.
     func saveChatFrame() {}
 
+    // MARK: - Hover-pause (v1.3)
+    // Cancel auto-close while the user is hovering the result card, resume
+    // it (with a fresh countdown) on mouse-leave so long answers don't
+    // vanish mid-read. Pin still wins — pinned HUDs never auto-close at all.
+
+    func onHoverChanged(_ hovering: Bool) {
+        guard panel != nil else { return }   // HUD already closed, don't restart anything
+        if hovering {
+            autoCloseTask?.cancel()
+            autoCloseTask = nil
+        } else if let seconds = lastAutoCloseSeconds {
+            scheduleAutoClose(after: seconds)
+        }
+    }
+
     // MARK: - Timers
 
     private func scheduleAutoClose(after seconds: TimeInterval) {
         guard !hudState.isPinned else { return }
+        lastAutoCloseSeconds = seconds
         cancelAutoClose()
         autoCloseTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
