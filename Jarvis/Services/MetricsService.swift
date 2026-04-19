@@ -130,12 +130,22 @@ actor MetricsService {
         line.append("\n")
         guard let bytes = line.data(using: .utf8) else { return }
 
-        if let handle = try? FileHandle(forWritingTo: jsonlURL) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: bytes)
-        } else {
+        // Bootstrap: create the file on the first write. Once it exists, any
+        // transient FileHandle failure is logged and the sample dropped —
+        // we never want a partial write fallback to *replace* the existing
+        // log with one row, which the naive .atomic write above used to do.
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: jsonlURL.path) {
             try? bytes.write(to: jsonlURL, options: .atomic)
+            return
         }
+
+        guard let handle = try? FileHandle(forWritingTo: jsonlURL) else {
+            LoggingService.shared.log("MetricsService: could not open \(jsonlURL.lastPathComponent) for append; dropping sample", level: .warning)
+            return
+        }
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: bytes)
     }
 }

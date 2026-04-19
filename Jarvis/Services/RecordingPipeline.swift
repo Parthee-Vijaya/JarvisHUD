@@ -236,17 +236,14 @@ class RecordingPipeline {
 
     /// Run local STT if available. Returns nil when the transcriber isn't
     /// ready, the audio is silent, or the engine threw — all of which fall
-    /// back to the legacy Gemini audio path. Emits a `.transcribe` metric.
+    /// back to the legacy Gemini audio path. Emits a `.transcribe` metric
+    /// on both success and failure (via `MetricsService.time`).
     private func transcribeLocally(_ audioData: Data) async -> String? {
-        let ready = await localTranscriber.isReady
-        guard ready else { return nil }
+        guard await localTranscriber.isReady else { return nil }
         do {
-            let start = ContinuousClock.now
-            let text = try await localTranscriber.transcribe(audioData: audioData, language: "da")
-            let elapsed = ContinuousClock.now - start
-            let ms = Int(elapsed.components.seconds) * 1000
-                + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
-            await MetricsService.shared.record(phase: .transcribe, durationMs: ms, transport: "local-whisper")
+            let text = try await MetricsService.shared.time(.transcribe, transport: "local-whisper") {
+                try await self.localTranscriber.transcribe(audioData: audioData, language: "da")
+            }
             return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
         } catch {
             LoggingService.shared.log("Local transcribe failed, falling back to Gemini audio: \(error)", level: .warning)
@@ -254,39 +251,31 @@ class RecordingPipeline {
         }
     }
 
-    /// Text-to-model call (used after local STT succeeded). Emits a
-    /// `.modelCall` metric so we can see Gemini RTT separately from STT.
+    /// Text-to-model call (used after local STT succeeded). Timing wrapped
+    /// through `MetricsService.time` so `modelCall` latency is recorded
+    /// identically on success + failure.
     private func callModel(prompt: String, screenshot: Data?, mode: Mode, transport: String) async -> Result<String, Error> {
-        let start = ContinuousClock.now
-        let result: Result<String, Error>
-        if let screenshot {
-            result = await geminiClient.sendTextWithImage(prompt: prompt, mode: mode, imageData: screenshot)
-        } else {
-            result = await geminiClient.sendText(prompt: prompt, mode: mode)
+        await MetricsService.shared.time(.modelCall, mode: mode.name, transport: transport) {
+            if let screenshot {
+                return await self.geminiClient.sendTextWithImage(prompt: prompt, mode: mode, imageData: screenshot)
+            } else {
+                return await self.geminiClient.sendText(prompt: prompt, mode: mode)
+            }
         }
-        let elapsed = ContinuousClock.now - start
-        let ms = Int(elapsed.components.seconds) * 1000
-            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
-        await MetricsService.shared.record(phase: .modelCall, durationMs: ms, mode: mode.name, transport: transport)
-        return result
     }
 
     /// Legacy path: audio → Gemini (Gemini transcribes internally). Retained
-    /// as a fallback for when WhisperKit isn't loaded yet. Emits a
-    /// `.modelCall` metric tagged `gemini-audio` so we can compare the two.
+    /// as a fallback for when WhisperKit isn't loaded yet. Emits the same
+    /// `.modelCall` metric tagged `gemini-audio` so we can compare the two
+    /// transports directly in the histogram.
     private func callModelWithAudio(audioData: Data, screenshot: Data?, mode: Mode) async -> Result<String, Error> {
-        let start = ContinuousClock.now
-        let result: Result<String, Error>
-        if let screenshot {
-            result = await geminiClient.sendAudioWithImage(audioData, imageData: screenshot, mode: mode)
-        } else {
-            result = await geminiClient.sendAudio(audioData, mode: mode)
+        await MetricsService.shared.time(.modelCall, mode: mode.name, transport: "gemini-audio") {
+            if let screenshot {
+                return await self.geminiClient.sendAudioWithImage(audioData, imageData: screenshot, mode: mode)
+            } else {
+                return await self.geminiClient.sendAudio(audioData, mode: mode)
+            }
         }
-        let elapsed = ContinuousClock.now - start
-        let ms = Int(elapsed.components.seconds) * 1000
-            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
-        await MetricsService.shared.record(phase: .modelCall, durationMs: ms, mode: mode.name, transport: "gemini-audio")
-        return result
     }
 
     // MARK: - Result Delivery
