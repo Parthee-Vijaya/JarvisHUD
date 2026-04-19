@@ -595,11 +595,103 @@ struct SettingsVoicePane: View {
                         .font(.caption)
                 }
             }
+
+            SettingsCard(
+                title: "Offline STT (WhisperKit)",
+                footer: "Modellen på 632 MB hentes én gang og caches lokalt. Jarvis bruger den som standard for dikterings-modes, så dine stemmeoptagelser aldrig forlader maskinen."
+            ) {
+                whisperStatusRow
+                HStack {
+                    Button("Forhåndsindlæs nu") {
+                        triggerPreload()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isWhisperBusy)
+                    Spacer()
+                }
+            }
         }
         .onAppear {
             if let existing = keychainService.getPorcupineKey() { porcupineKey = existing }
         }
     }
+
+    // MARK: - WhisperKit status helpers
+
+    @ViewBuilder
+    private var whisperStatusRow: some View {
+        #if canImport(WhisperKit)
+        let state = WhisperKitTranscriber.preloadState
+        HStack(spacing: Constants.Spacing.sm) {
+            Image(systemName: whisperIcon(for: state.phase))
+                .foregroundStyle(whisperTint(for: state.phase))
+            Text(whisperLabel(for: state.phase, progress: state.progress))
+                .font(.callout)
+                .foregroundStyle(.primary)
+            Spacer()
+        }
+        #else
+        HStack(spacing: Constants.Spacing.sm) {
+            Image(systemName: "xmark.circle").foregroundStyle(.secondary)
+            Text("WhisperKit-pakken er ikke wired up i dette build").font(.callout).foregroundStyle(.secondary)
+            Spacer()
+        }
+        #endif
+    }
+
+    #if canImport(WhisperKit)
+    private var isWhisperBusy: Bool {
+        switch WhisperKitTranscriber.preloadState.phase {
+        case .downloading, .warming: return true
+        default: return false
+        }
+    }
+
+    private func whisperIcon(for phase: WhisperPreloadState.Phase) -> String {
+        switch phase {
+        case .idle:         return "circle"
+        case .downloading:  return "arrow.down.circle"
+        case .warming:      return "flame"
+        case .ready:        return "checkmark.circle.fill"
+        case .failed:       return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func whisperTint(for phase: WhisperPreloadState.Phase) -> Color {
+        switch phase {
+        case .ready:  return .green
+        case .failed: return .red
+        default:      return .secondary
+        }
+    }
+
+    private func whisperLabel(for phase: WhisperPreloadState.Phase, progress: Double) -> String {
+        switch phase {
+        case .idle:                 return "Ikke forhåndsindlæst — vent til første optagelse eller tryk \"Forhåndsindlæs nu\""
+        case .downloading:          return String(format: "Henter model… %d%%", Int(progress * 100))
+        case .warming:              return "Varmer model…"
+        case .ready:                return "Klar (632 MB cached)"
+        case .failed(let msg):      return "Fejlede: \(msg)"
+        }
+    }
+
+    private func triggerPreload() {
+        // Dispatch onto a detached task so the button press returns immediately.
+        // The shared transcriber's `preload()` is idempotent: if already loaded,
+        // it returns instantly and the UI just flips to `.ready`.
+        Task.detached(priority: .userInitiated) {
+            do {
+                let transcriber = WhisperKitTranscriber()
+                try await transcriber.preload()
+            } catch {
+                LoggingService.shared.log("Manual WhisperKit preload failed: \(error)", level: .error)
+            }
+        }
+    }
+    #else
+    private var isWhisperBusy: Bool { true }
+    private func triggerPreload() {}
+    #endif
 }
 
 // MARK: - Claude Code pane

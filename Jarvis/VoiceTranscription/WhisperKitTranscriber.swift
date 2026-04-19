@@ -1,7 +1,33 @@
 import Foundation
+import SwiftUI
 
 #if canImport(WhisperKit)
 import WhisperKit
+
+/// Observable state for the one-time WhisperKit model preload. Written to by
+/// `WhisperKitTranscriber.preload()`, read by the HUD and Settings panes.
+///
+/// Kept MainActor-bound so SwiftUI's `@Observable` diffing sees every mutation
+/// on the UI thread without hopping. The transcriber calls into this via
+/// `MainActor.run` from its background preload task.
+@MainActor
+@Observable
+final class WhisperPreloadState {
+    enum Phase: Equatable {
+        case idle
+        case downloading
+        case warming
+        case ready
+        case failed(String)
+    }
+
+    static let shared = WhisperPreloadState()
+
+    var phase: Phase = .idle
+    var progress: Double = 0.0   // 0.0...1.0 during `.downloading`
+
+    private init() {}
+}
 
 /// Local speech-to-text via WhisperKit (https://github.com/argmaxinc/WhisperKit).
 ///
@@ -19,36 +45,69 @@ actor WhisperKitTranscriber: LocalTranscriber {
 
     var isReady: Bool { isReadyState }
 
+    /// Shared preload state surface. Nonisolated because `WhisperPreloadState`
+    /// is a MainActor type — callers read it from SwiftUI views directly.
+    nonisolated static var preloadState: WhisperPreloadState { WhisperPreloadState.shared }
+
     /// Preload the model. Safe to call repeatedly — second and later calls
     /// return instantly once the WhisperKit instance is cached.
     ///
-    /// First call on a fresh install downloads the model (`openai_whisper-tiny`
-    /// is ~39 MB; upgrades to small/medium are a config flip). Subsequent
-    /// launches load from cache in < 1 s.
+    /// First call on a fresh install downloads the model (~632 MB). We drive
+    /// `WhisperPreloadState.shared` so the UI (Cockpit chip + Settings row)
+    /// can render download progress. Subsequent launches hit the cache and
+    /// skip straight to `.warming` then `.ready`.
     func preload() async throws {
         if whisper != nil { return }
         let modelName = "openai_whisper-large-v3-v20240930_turbo_632MB"
         LoggingService.shared.log("WhisperKit preload starting (model=\(modelName))…")
+        await MainActor.run {
+            WhisperPreloadState.shared.phase = .downloading
+            WhisperPreloadState.shared.progress = 0.0
+        }
         let start = ContinuousClock.now
-        // large-v3 turbo distillation — 632 MB, dansk kvalitet i top-klassen,
-        // ~1-2s transcription på M-series. User's machine handles it easily.
-        let config = WhisperKitConfig(
-            model: modelName,
-            verbose: false,
-            logLevel: .info,
-            prewarm: true,
-            load: true,
-            download: true
-        )
         do {
+            // 1) Download (no-op if cached). Pipe Progress.fractionCompleted
+            //    into our MainActor state so the HUD can render it.
+            let modelFolder = try await WhisperKit.download(
+                variant: modelName,
+                useBackgroundSession: false,
+                from: "argmaxinc/whisperkit-coreml"
+            ) { progress in
+                let fraction = progress.fractionCompleted
+                Task { @MainActor in
+                    WhisperPreloadState.shared.progress = fraction
+                }
+            }
+
+            // 2) Now warm the model. `modelFolder` is already local, so this
+            //    second init won't re-download.
+            await MainActor.run {
+                WhisperPreloadState.shared.phase = .warming
+                WhisperPreloadState.shared.progress = 1.0
+            }
+
+            let config = WhisperKitConfig(
+                model: modelName,
+                modelFolder: modelFolder.path,
+                verbose: false,
+                logLevel: .info,
+                prewarm: true,
+                load: true,
+                download: false
+            )
             let instance = try await WhisperKit(config)
             whisper = instance
             isReadyState = true
+
+            await MainActor.run { WhisperPreloadState.shared.phase = .ready }
+
             let elapsed = ContinuousClock.now - start
             let seconds = Double(elapsed.components.seconds)
                 + Double(elapsed.components.attoseconds) / 1e18
             LoggingService.shared.log(String(format: "WhisperKit ready in %.2fs (model=\(modelName))", seconds))
         } catch {
+            let msg = (error as NSError).localizedDescription
+            await MainActor.run { WhisperPreloadState.shared.phase = .failed(msg) }
             LoggingService.shared.log("WhisperKit preload failed: \(error)", level: .error)
             throw error
         }

@@ -132,6 +132,7 @@ struct InfoModeView: View {
                     .font(.caption)
                     .foregroundStyle(JarvisTheme.textMuted)
             }
+            whisperPreloadChip
             Spacer()
             topChromeButton(system: service.state == .loading ? "arrow.triangle.2.circlepath" : "arrow.clockwise",
                             help: "Opdater") {
@@ -143,6 +144,50 @@ struct InfoModeView: View {
         .padding(.top, 12)
         .padding(.bottom, 10)
     }
+
+    // MARK: - WhisperKit preload status chip
+
+    /// Non-dominant status chip that surfaces the WhisperKit preload phase.
+    /// Hidden when the model is ready (to keep the header uncluttered) and
+    /// when no preload has kicked off yet. Always visible during download /
+    /// warming / failure.
+    #if canImport(WhisperKit)
+    @ViewBuilder
+    private var whisperPreloadChip: some View {
+        let state = WhisperKitTranscriber.preloadState
+        switch state.phase {
+        case .idle, .ready:
+            EmptyView()
+        case .downloading:
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Henter offline STT… \(Int(state.progress * 100))%")
+                    .font(.caption2)
+            }
+            .foregroundStyle(Color.white.opacity(0.55))
+        case .warming:
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Varmer model…")
+                    .font(.caption2)
+            }
+            .foregroundStyle(Color.white.opacity(0.55))
+        case .failed(let msg):
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Offline STT utilgængelig")
+                    .font(.caption2)
+            }
+            .foregroundStyle(Color.white.opacity(0.55))
+            .help(msg)
+        }
+    }
+    #else
+    @ViewBuilder private var whisperPreloadChip: some View { EmptyView() }
+    #endif
 
     /// Slim top-right icon button matching the one on `ChatView.chatTopBar`
     /// so Cockpit's chrome reads identically.

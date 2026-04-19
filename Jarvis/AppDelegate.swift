@@ -165,6 +165,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let router = commandRouter {
                 Task { await router.run(mode: BuiltInModes.vision, input: prompt) }
             }
+        case "dictate-clipboard":
+            // Fire-and-forget URL entry. AppIntent callers invoke
+            // `dictateToClipboard(seconds:)` directly so they can await
+            // the transcript; the URL scheme just kicks off the flow
+            // with HUD feedback.
+            Task { _ = await dictateToClipboard(seconds: 6) }
         case "info", "cockpit":
             hudController.showInfoMode()
         case "briefing", "uptodate":
@@ -406,6 +412,112 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 LoggingService.shared.log("Chat dictation start failed: \(error)", level: .warning)
             }
+        }
+    }
+
+    // MARK: - AppIntents helpers (v1.2.2)
+    //
+    // The three methods below back the Siri/Shortcuts intents in
+    // `JarvisAppIntents.swift`. Kept on AppDelegate (rather than free
+    // functions) so they share the same `geminiClient`, `audioCapture`,
+    // and `hudController` instances as the hotkey-driven paths — no
+    // second set of services to keep in sync.
+
+    /// Push-to-talk for a fixed `seconds` window, transcribe via Gemini,
+    /// copy the result to the system pasteboard. Returns the trimmed
+    /// transcript (empty string on mic denial or Gemini failure).
+    @MainActor
+    func dictateToClipboard(seconds: TimeInterval = 6) async -> String {
+        guard permissions.checkMicrophone() else {
+            hudController.showError("Mikrofon-tilladelse mangler")
+            return ""
+        }
+        hudController.activeModeName = "Dictation → Clipboard"
+        hudController.showRecording()
+        do {
+            try audioCapture.startRecording()
+        } catch {
+            hudController.showError("Mic fejl: \(error.localizedDescription)")
+            return ""
+        }
+        try? await Task.sleep(for: .seconds(seconds))
+        let audioData = audioCapture.stopRecording()
+        hudController.showProcessing()
+        guard !audioData.isEmpty else {
+            hudController.close()
+            return ""
+        }
+        let result = await geminiClient.sendAudio(audioData, mode: BuiltInModes.dictation)
+        switch result {
+        case .success(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(trimmed, forType: .string)
+            hudController.showConfirmation("Kopieret til udklipsholder")
+            return trimmed
+        case .failure(let error):
+            hudController.showError("Transkription fejlede: \(error.localizedDescription)")
+            return ""
+        }
+    }
+
+    /// Fetch a URL, strip tags/scripts/styles, cap at 8 KB of readable text,
+    /// then ask Gemini for a 3-bullet summary. Throws on fetch/decode/API
+    /// failure so Shortcut error branches can handle it.
+    @MainActor
+    func summarizeURL(_ url: URL) async throws -> String {
+        let (data, _) = try await URLSession.shared.data(from: url)
+        guard let raw = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .isoLatin1) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        let stripped = raw
+            .replacingOccurrences(
+                of: "<script[^>]*>[\\s\\S]*?</script>",
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "<style[^>]*>[\\s\\S]*?</style>",
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let truncated = String(stripped.prefix(8_000))
+        let prompt = """
+        Opsummer indholdet nedenfor i præcis 3 korte bullet points \
+        (hver under 20 ord). Svar på samme sprog som teksten.
+
+        Indhold:
+        \(truncated)
+        """
+        let result = await geminiClient.sendText(prompt: prompt, mode: BuiltInModes.summarize)
+        switch result {
+        case .success(let text): return text
+        case .failure(let error): throw error
+        }
+    }
+
+    /// Combine selected text + a question into a single prompt, send to
+    /// Gemini chat mode, return the reply as one string. Bypasses
+    /// ChatPipeline because Shortcuts wants a synchronous value — no
+    /// streaming surface needed here.
+    @MainActor
+    func askWithContext(selectedText: String, question: String) async throws -> String {
+        let prompt = """
+        Context:
+
+        \(selectedText)
+
+        Question: \(question)
+        """
+        let result = await geminiClient.sendText(prompt: prompt, mode: BuiltInModes.chat)
+        switch result {
+        case .success(let text): return text
+        case .failure(let error): throw error
         }
     }
 
