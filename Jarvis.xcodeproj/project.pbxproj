@@ -6,6 +6,20 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5FD9669C2F950EFB004D42EF /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = AA200020300000000000AAAA /* HotKey */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AA200107300000000000AAAA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA200009300000000000AAAA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA200006300000000000AAAA;
+			remoteInfo = Jarvis;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		AA200001300000000000AAAA /* Jarvis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jarvis.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA200101300000000000AAAA /* JarvisTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JarvisTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -29,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5FD9669C2F950EFB004D42EF /* HotKey in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -184,16 +199,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXContainerItemProxy section */
-		AA200107300000000000AAAA /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = AA200009300000000000AAAA /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = AA200006300000000000AAAA;
-			remoteInfo = Jarvis;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXTargetDependency section */
 		AA200108300000000000AAAA /* PBXTargetDependency */ = {
