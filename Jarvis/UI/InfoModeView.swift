@@ -465,6 +465,8 @@ struct InfoModeView: View {
             commuteChipsRow
                 .padding(.top, 4)
 
+            trafficEventsSection
+
             destinationInputRow
                 .padding(.top, 8)
 
@@ -483,6 +485,100 @@ struct InfoModeView: View {
                 )
                 .padding(.top, 6)
             }
+        }
+    }
+
+    /// Compact list of Vejdirektoratet events near the user or along the
+    /// active route. Hidden entirely when the feed has nothing to say.
+    @ViewBuilder
+    private var trafficEventsSection: some View {
+        if !service.trafficEvents.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.85))
+                    Text(trafficEventsHeader)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.85))
+                    Spacer(minLength: 0)
+                    Text("Kilde: Vejdirektoratet")
+                        .font(.caption2)
+                        .foregroundStyle(Color.white.opacity(0.45))
+                }
+                ForEach(service.trafficEvents.prefix(4)) { event in
+                    trafficEventRow(event)
+                }
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    private var trafficEventsHeader: String {
+        switch service.trafficEventsScope {
+        case .nearby: return "Trafikinfo i nærheden (\(service.trafficEvents.count))"
+        case .route:  return "Trafikinfo på ruten (\(service.trafficEvents.count))"
+        }
+    }
+
+    private func trafficEventRow(_ event: TrafficEvent) -> some View {
+        // Distance is only useful in "nearby" mode — on a route, the events
+        // are already filtered by proximity to the polyline, and measuring
+        // from the origin would be misleading for events near the destination.
+        let distanceText: String? = {
+            guard service.trafficEventsScope == .nearby,
+                  let origin = service.commute?.origin.clLocationCoordinate else {
+                return nil
+            }
+            let km = event.distanceKm(from: origin)
+            if km < 1 { return String(format: "%.0f m", km * 1000) }
+            if km < 10 { return String(format: "%.1f km", km) }
+            return "\(Int(km.rounded())) km"
+        }()
+
+        return Button {
+            if let url = URL(string: "https://trafikkort.vejdirektoratet.dk/index.html") {
+                NSWorkspace.shared.open(url)
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: event.category.icon)
+                    .font(.caption)
+                    .foregroundStyle(trafficEventColor(event.category))
+                    .frame(width: 14, alignment: .center)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(event.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.95))
+                        if let distanceText {
+                            Text("· \(distanceText)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.55))
+                        }
+                    }
+                    if !event.header.isEmpty {
+                        Text(event.header)
+                            .font(.caption2)
+                            .foregroundStyle(Color.white.opacity(0.7))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(event.plainDescription.isEmpty ? event.header : event.plainDescription)
+    }
+
+    private func trafficEventColor(_ category: TrafficEvent.Category) -> Color {
+        switch category {
+        case .accident:      return JarvisTheme.criticalGlow
+        case .obstruction:   return JarvisTheme.warningGlow
+        case .animal, .roadCondition: return JarvisTheme.warningGlow
+        case .publicEvent, .other: return Color.white.opacity(0.75)
         }
     }
 

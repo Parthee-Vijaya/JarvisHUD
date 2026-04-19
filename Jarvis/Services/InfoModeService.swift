@@ -10,6 +10,10 @@ import Observation
 final class InfoModeService {
     enum LoadState: Equatable { case idle, loading, loaded, failed(String) }
 
+    /// Whether the active `trafficEvents` list is "nearby the user" or "on
+    /// the route to the custom destination". Drives the tile header text.
+    enum TrafficScope: Equatable { case nearby, route }
+
     // Top-level state
     private(set) var state: LoadState = .idle
     private(set) var lastRefresh: Date?
@@ -23,6 +27,12 @@ final class InfoModeService {
     /// an ad-hoc destination via the Hjem tile; the default home commute doesn't
     /// fetch it because weather-at-home is already in the Vejr tile.
     private(set) var destinationWeather: WeatherSnapshot?
+    /// Traffic events (accidents, animals, obstructions, …) from the
+    /// Vejdirektoratet feed, filtered to either the user's current location
+    /// (default home commute) or a buffer around the active route polyline
+    /// (custom destination mode). Capped at 6 to keep the tile compact.
+    private(set) var trafficEvents: [TrafficEvent] = []
+    private(set) var trafficEventsScope: TrafficScope = .nearby
     private(set) var systemInfo: SystemInfoSnapshot = SystemInfoSnapshot()
     private(set) var claudeStats: ClaudeStatsSnapshot = .empty
     private(set) var airQuality: AirQualitySnapshot?
@@ -57,6 +67,7 @@ final class InfoModeService {
     private let claudeStatsService = ClaudeStatsService()
     private let airQualityService = AirQualityService()
     private let calendarService = CalendarService()
+    private let trafficEventsService = TrafficEventsService()
     private let cache = InfoCache()
 
     /// Guards against concurrent `refresh` calls. The view calls `.task` on appear
@@ -103,6 +114,7 @@ final class InfoModeService {
                 group.addTask { await self.loadCommuteTile() }
                 group.addTask { await self.loadAirQualityTile() }
                 group.addTask { await self.loadCalendarTile() }
+                group.addTask { await self.loadTrafficEventsTile() }
             }
             await MainActor.run {
                 self.lastRefresh = Date()
@@ -187,6 +199,44 @@ final class InfoModeService {
         }
     }
 
+    /// Fetch Vejdirektoratet's live events feed and re-filter it for the
+    /// current context — events near the user by default, or along the
+    /// custom-destination route when one is set. Fires on normal refresh
+    /// plus on commute recompute.
+    private func loadTrafficEventsTile() async {
+        do {
+            let all = try await trafficEventsService.fetch()
+            await applyTrafficFilter(events: all)
+        } catch {
+            // Feed failures are non-fatal — the tile just hides.
+            self.trafficEvents = []
+        }
+    }
+
+    /// Decide which filter to apply based on whether a custom route is
+    /// active and we have a polyline to buffer against.
+    private func applyTrafficFilter(events: [TrafficEvent]) async {
+        if let commute, !commute.routeCoordinates.isEmpty, customDestinationAddress != nil {
+            let filtered = events.alongRoute(commute.routeCoordinates, bufferKm: 1.0)
+            self.trafficEvents = Array(filtered.prefix(6))
+            self.trafficEventsScope = .route
+            return
+        }
+        // Default: "near me". Origin = live location if available, else the
+        // commute origin (which falls back to the home address or Næstved).
+        let origin: CLLocationCoordinate2D
+        if let live = locationService.coordinate {
+            origin = live
+        } else if let commute = self.commute {
+            origin = commute.origin.clLocationCoordinate
+        } else {
+            origin = LocationService.naestvedCoordinate
+        }
+        let filtered = events.nearby(origin, withinKm: 25)
+        self.trafficEvents = Array(filtered.prefix(6))
+        self.trafficEventsScope = .nearby
+    }
+
     // MARK: - Manual actions
 
     func runSpeedtest() async {
@@ -251,6 +301,17 @@ final class InfoModeService {
                     // Swallow — surface nothing instead of a confusing error.
                 }
             }
+            // Re-filter the traffic-events feed against the new polyline so
+            // the tile switches from "events nearby" to "events on route".
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let all = try await self.trafficEventsService.fetch()
+                    await self.applyTrafficFilter(events: all)
+                } catch {
+                    // Non-fatal — leave trafficEvents as-is.
+                }
+            }
         } catch let error as CommuteError {
             self.commute = nil
             self.commuteError = error.localizedDescription ?? "Ukendt ruteberegningsfejl"
@@ -265,6 +326,8 @@ final class InfoModeService {
         customDestinationAddress = nil
         destinationWeather = nil
         await loadCommuteTile()
+        // Re-scope traffic events back to "near me" now the route is gone.
+        await loadTrafficEventsTile()
     }
 
     /// Geocode fallback for when CoreLocation has no fix. Uses the home address
