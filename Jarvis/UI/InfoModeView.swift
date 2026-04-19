@@ -14,31 +14,42 @@ struct InfoModeView: View {
         VStack(spacing: 0) {
             header
             VStack(spacing: 12) {
-                // Two 3-tile rows up top — Vejr/Sol/Nyheder and Luft/Måne/
-                // Kalender. Per-row `.fixedSize(vertical: true)` means the
-                // HStack's height = tallest child, so the other two tiles
-                // stretch to match (via the `.frame(maxHeight: .infinity)`
-                // in the tile shell). Safe here because the fixedSize is
-                // scoped per row, not applied at the panel root — the
-                // v1.2.3 crash was caused by the latter.
-                tilesRow.fixedSize(horizontal: false, vertical: true)
-                airAndMoonRow.fixedSize(horizontal: false, vertical: true)
+                // Top grid: 2×2 tiles on the LEFT (Vejr/Sol on top, Luft+Måne
+                // and Nyheder on bottom) + tall Trafikinfo tile on the RIGHT
+                // spanning both rows. Trafikinfo grows with its content, so
+                // when there are many events the tall column carries them
+                // without stretching the little weather tiles.
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(spacing: 12) {
+                        HStack(alignment: .top, spacing: 12) {
+                            weatherTile
+                            sunTile
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .top, spacing: 12) {
+                            airMoonTile
+                            newsTile
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    trafficInfoTile
+                        .frame(width: 280)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }
+                .fixedSize(horizontal: false, vertical: true)
 
-                // Rute + System share a row so the user can read both
-                // without scrolling. Rute tile is narrower now — its
-                // internal layout drops the horizontal split and stacks
-                // stats/chips/motorvejsulykker/input/map vertically.
+                // Rute + System share a row. System now bundles the
+                // old Netværk actions (speedtest / scan buttons + their
+                // results) so the two network sub-tiles collapse into one.
                 HStack(alignment: .top, spacing: 12) {
                     commuteTile
                     systemTile
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
-                HStack(alignment: .top, spacing: 12) {
-                    claudeStatsTile
-                    networkActions
-                }
-                .fixedSize(horizontal: false, vertical: true)
+                // Claude Code runs full-width — it's content-rich
+                // (budgets, projects, tools) and deserves the whole row.
+                claudeStatsTile.fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -54,6 +65,16 @@ struct InfoModeView: View {
         .frame(width: 960, alignment: .topLeading)
         .jarvisChatBackdrop()
         .task { await service.refresh() }
+        // Keep Claude Code tile live — poll every 15 s while the panel is
+        // visible so totals/projects/tools reflect the most recent session
+        // without waiting on the 2-min full-panel refresh. Task cancels
+        // automatically when the view disappears.
+        .task {
+            while !Task.isCancelled {
+                await service.refreshClaudeStats()
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+            }
+        }
     }
 
     // MARK: - Header (chat-family minimal chrome)
@@ -100,23 +121,7 @@ struct InfoModeView: View {
         .accessibilityLabel(help)
     }
 
-    // MARK: - Tiles row (weather + news + commute)
-
-    private var tilesRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            weatherTile
-            sunTile
-            newsTile
-        }
-    }
-
-    private var airAndMoonRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            airQualityTile
-            moonTile
-            trafficInfoTile
-        }
-    }
+    // MARK: - Tiles
 
     /// Live Vejdirektoratet events, promoted out of the Hjem tile and
     /// given its own top-level slot in the 3-column grid. Shows up to 3
@@ -163,70 +168,83 @@ struct InfoModeView: View {
         }
     }
 
-    private var airQualityTile: some View {
-        tile(title: "Luft & UV", icon: "aqi.medium") {
-            if let air = service.airQuality {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                Text(air.europeanAQI.map(String.init) ?? "—")
-                                    .font(.system(size: 26, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.white)
-                                Text("AQI")
-                                    .font(.caption).foregroundStyle(Color.white.opacity(0.55))
-                            }
-                            Text(air.aqiBand.label)
-                                .font(.caption)
-                                .foregroundStyle(aqiColor(air.aqiBand))
-                        }
-                        Spacer(minLength: 6)
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                Text(air.uvIndex.map { String(format: "%.1f", $0) } ?? "—")
-                                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.white)
-                                Text("UV")
-                                    .font(.caption).foregroundStyle(Color.white.opacity(0.55))
-                            }
-                            Text(air.uvBand.label)
-                                .font(.caption)
-                                .foregroundStyle(uvColor(air.uvBand))
-                        }
-                    }
-                    if let pm25 = air.pm25 {
-                        Text(String(format: "PM2.5: %.1f µg/m³", pm25))
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.6))
-                    }
-                }
-            } else {
-                placeholder("Henter luft…")
+    /// Merged Luft/UV + Måne tile. Horizontally split inside: air metrics
+    /// left, moon phase right. Compact enough to fit a half-row slot but
+    /// still shows the primary values (AQI, UV, moon phase) at a glance.
+    private var airMoonTile: some View {
+        tile(title: "Luft & Måne", icon: "aqi.medium") {
+            HStack(alignment: .top, spacing: 12) {
+                airSubBlock
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Divider()
+                    .frame(width: 1)
+                    .overlay(Color.white.opacity(0.12))
+                moonSubBlock
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
-    private var moonTile: some View {
-        let m = service.moon
-        return tile(title: "Måne", icon: "moon.fill") {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: m.phase.symbol)
-                    .font(.system(size: 36))
-                    .foregroundStyle(Color.white)
-                    .shadow(color: Color.white.opacity(0.6), radius: 6)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(m.phase.label)
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Text("\(m.illuminationPercent) % oplyst")
-                        .font(.caption)
-                        .foregroundStyle(Color.white.opacity(0.7))
-                    Text("Næste fuldmåne \(Self.fullMoonFormatter.string(from: m.nextFullMoon))")
-                        .font(.caption)
+    @ViewBuilder
+    private var airSubBlock: some View {
+        if let air = service.airQuality {
+            VStack(alignment: .leading, spacing: 4) {
+                airValueRow(label: "AQI",
+                            value: air.europeanAQI.map(String.init) ?? "—",
+                            band: air.aqiBand.label,
+                            color: aqiColor(air.aqiBand))
+                airValueRow(label: "UV",
+                            value: air.uvIndex.map { String(format: "%.1f", $0) } ?? "—",
+                            band: air.uvBand.label,
+                            color: uvColor(air.uvBand))
+                if let pm25 = air.pm25 {
+                    Text(String(format: "PM2.5 · %.1f µg/m³", pm25))
+                        .font(.caption2)
                         .foregroundStyle(Color.white.opacity(0.55))
                 }
-                Spacer(minLength: 0)
             }
+        } else {
+            placeholder("Henter luft…")
+        }
+    }
+
+    private func airValueRow(label: String, value: String, band: String, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.white.opacity(0.55))
+            Text(band)
+                .font(.caption2)
+                .foregroundStyle(color)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder
+    private var moonSubBlock: some View {
+        let m = service.moon
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: m.phase.symbol)
+                    .font(.system(size: 22))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: Color.white.opacity(0.5), radius: 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(m.phase.label)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text("\(m.illuminationPercent) % oplyst")
+                        .font(.caption2)
+                        .foregroundStyle(Color.white.opacity(0.7))
+                }
+            }
+            Text("Fuld \(Self.fullMoonFormatter.string(from: m.nextFullMoon))")
+                .font(.caption2)
+                .foregroundStyle(Color.white.opacity(0.55))
         }
     }
 
@@ -1300,8 +1318,8 @@ struct InfoModeView: View {
     // MARK: - System tile
 
     private var systemTile: some View {
-        tile(title: "System", icon: "cpu.fill", fullWidth: true) {
-            HStack(alignment: .top, spacing: 24) {
+        tile(title: "System & Netværk", icon: "cpu.fill", fullWidth: true) {
+            HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     infoRow("Batteri", value: batteryLine)
                     infoRow("macOS", value: service.systemInfo.osVersion)
@@ -1315,70 +1333,68 @@ struct InfoModeView: View {
                     infoRow("Hardware", value: hardwareLine)
                 }
             }
-        }
-    }
 
-    // MARK: - Network actions
-
-    private var networkActions: some View {
-        tile(title: "Netværk", icon: "network", fullWidth: true) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Button {
-                        Task { await service.runSpeedtest() }
-                    } label: {
-                        Label(service.isRunningSpeedtest ? "Kører speedtest…" : "Kør speedtest",
-                              systemImage: "speedometer")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.white)
-                    .controlSize(.small)
-                    .disabled(service.isRunningSpeedtest)
-
-                    Button {
-                        Task { await service.runNetworkScan() }
-                    } label: {
-                        Label(service.isRunningNetworkScan ? "Scanner…" : "Scan lokalt netværk",
-                              systemImage: "dot.radiowaves.up.forward")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(service.isRunningNetworkScan)
+            // Netværk-handlinger folded in so System is the one tile you
+            // go to for "hvad sker der med min maskine + netværk".
+            HStack(spacing: 8) {
+                Button {
+                    Task { await service.runSpeedtest() }
+                } label: {
+                    Label(service.isRunningSpeedtest ? "Kører…" : "Speedtest",
+                          systemImage: "speedometer")
+                        .font(.caption)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.white)
+                .controlSize(.small)
+                .disabled(service.isRunningSpeedtest)
 
-                if let speedtest = service.systemInfo.speedtestSummary {
-                    Text(speedtest)
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(Color.white)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(JarvisTheme.surfaceBase.opacity(0.6))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                Button {
+                    Task { await service.runNetworkScan() }
+                } label: {
+                    Label(service.isRunningNetworkScan ? "Scanner…" : "Scan LAN",
+                          systemImage: "dot.radiowaves.up.forward")
+                        .font(.caption)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(service.isRunningNetworkScan)
+            }
+            .padding(.top, 8)
 
-                if !service.systemInfo.networkScan.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(service.systemInfo.networkScan.count) enheder fundet")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Color.white.opacity(0.7))
-                        ForEach(service.systemInfo.networkScan.prefix(8)) { device in
-                            HStack {
-                                Text(device.ip)
-                                    .font(.footnote.monospaced())
-                                    .foregroundStyle(.white.opacity(0.85))
-                                Spacer()
-                                Text(device.mac)
-                                    .font(.caption2.monospaced())
-                                    .foregroundStyle(Color.white.opacity(0.55))
-                            }
-                        }
-                        if service.systemInfo.networkScan.count > 8 {
-                            Text("+ \(service.systemInfo.networkScan.count - 8) yderligere")
-                                .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.5))
+            if let speedtest = service.systemInfo.speedtestSummary {
+                Text(speedtest)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Color.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(6)
+                    .background(JarvisTheme.surfaceBase.opacity(0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
+            if !service.systemInfo.networkScan.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(service.systemInfo.networkScan.count) enheder på LAN")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.7))
+                    ForEach(service.systemInfo.networkScan.prefix(5)) { device in
+                        HStack {
+                            Text(device.ip)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.white.opacity(0.85))
+                            Spacer()
+                            Text(device.mac)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(Color.white.opacity(0.55))
                         }
                     }
+                    if service.systemInfo.networkScan.count > 5 {
+                        Text("+ \(service.systemInfo.networkScan.count - 5) yderligere")
+                            .font(.caption2)
+                            .foregroundStyle(Color.white.opacity(0.5))
+                    }
                 }
+                .padding(.top, 2)
             }
         }
     }

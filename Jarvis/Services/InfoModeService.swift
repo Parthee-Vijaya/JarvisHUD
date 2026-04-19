@@ -182,6 +182,15 @@ final class InfoModeService {
         self.claudeStats = snap
     }
 
+    /// Lightweight refresh for just the Claude Code tile — bypasses the
+    /// 2-minute refresh throttle. The Cockpit view calls this on a 15-second
+    /// loop while visible so totals / projects / tools always reflect the
+    /// latest `~/.claude/stats-cache.json` state.
+    func refreshClaudeStats() async {
+        let snap = await claudeStatsService.fetch()
+        self.claudeStats = snap
+    }
+
     private func loadWeatherTile() async {
         guard let snap = await loadWeather() else { return }
         self.weather = snap
