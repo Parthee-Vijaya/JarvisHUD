@@ -30,9 +30,15 @@ class ConversationStore {
     private let directory: URL
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        directory = appSupport.appendingPathComponent("Jarvis/conversations", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        directory = base.appendingPathComponent("Jarvis/conversations", isDirectory: true)
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            LoggingService.shared.log("ConversationStore: failed to create directory at \(directory.path): \(error)", level: .error)
+        }
     }
 
     // MARK: - Save

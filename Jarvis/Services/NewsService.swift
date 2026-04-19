@@ -19,16 +19,21 @@ struct NewsHeadline: Identifiable, Equatable, Codable {
             case .hackernews: return "Hacker News"
             }
         }
-        var feedURL: URL {
+        var feedURLString: String {
             switch self {
-            case .dr:         return URL(string: "https://www.dr.dk/nyheder/service/feeds/allenyheder")!
-            case .politiken:  return URL(string: "https://politiken.dk/rss/senestenyt.rss")!
-            case .bbc:        return URL(string: "https://feeds.bbci.co.uk/news/world/rss.xml")!
-            case .guardian:   return URL(string: "https://www.theguardian.com/world/rss")!
-            case .reddit:     return URL(string: "https://www.reddit.com/r/news/.rss")!
-            case .hackernews: return URL(string: "https://hnrss.org/frontpage")!
+            case .dr:         return "https://www.dr.dk/nyheder/service/feeds/allenyheder"
+            case .politiken:  return "https://politiken.dk/rss/senestenyt.rss"
+            case .bbc:        return "https://feeds.bbci.co.uk/news/world/rss.xml"
+            case .guardian:   return "https://www.theguardian.com/world/rss"
+            case .reddit:     return "https://www.reddit.com/r/news/.rss"
+            case .hackernews: return "https://hnrss.org/frontpage"
             }
         }
+
+        /// Returns nil if the compile-time feed string is ever edited into
+        /// something malformed. Caller skips that feed — we never want to crash
+        /// the whole app just because one RSS URL typo slips through review.
+        var feedURL: URL? { URL(string: feedURLString) }
 
         /// Sources that show up in the Info-mode segmented picker. Keeps the
         /// Cockpit focused on mainstream news while Briefing aggregates
@@ -64,7 +69,11 @@ final class NewsService {
     }
 
     func fetch(source: NewsHeadline.Source, limit: Int = 8) async throws -> [NewsHeadline] {
-        var request = URLRequest(url: source.feedURL)
+        guard let feedURL = source.feedURL else {
+            LoggingService.shared.log("News: malformed feed URL for \(source.rawValue): \(source.feedURLString)", level: .error)
+            throw NSError(domain: "News", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid feed URL"])
+        }
+        var request = URLRequest(url: feedURL)
         request.timeoutInterval = 6
         // Reddit rejects requests without a descriptive User-Agent; a generic
         // UA also keeps the other feeds happy and avoids CDNs returning 429.
