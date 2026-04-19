@@ -183,7 +183,9 @@ struct ChatView: View {
                     availableModes: availableModes,
                     shortcutLookup: shortcutLookup,
                     onSubmit: { text in
-                        Task { await commandRouter?.run(mode: selectedMode, input: text) }
+                        let image = inputBuffer?.attachedImage
+                        inputBuffer?.attachedImage = nil
+                        Task { await commandRouter?.run(mode: selectedMode, input: text, image: image) }
                     },
                     onNewChat: { selectedMode = BuiltInModes.chat },
                     onClose: onClose,
@@ -191,7 +193,8 @@ struct ChatView: View {
                     isPinned: isPinned,
                     isRecording: inputBuffer?.isRecording ?? false,
                     isTranscribing: inputBuffer?.isTranscribing ?? false,
-                    onToggleRecord: onToggleVoiceRecord
+                    onToggleRecord: onToggleVoiceRecord,
+                    inputBuffer: inputBuffer
                 )
             } else {
                 // Legacy callers without a commandRouter keep the old header

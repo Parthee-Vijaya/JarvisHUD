@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Spotlight-inspired command bar (β.12 revamp).
 ///
@@ -24,10 +26,10 @@ struct ChatCommandBar: View {
     let isRecording: Bool
     let isTranscribing: Bool
     let onToggleRecord: (() -> Void)?
-    /// v1.1.5 history sidebar toggle. Nil hides the button entirely (legacy
-    /// callers that don't have conversation plumbing).
-    var onToggleHistory: (() -> Void)? = nil
-    var isHistoryOpen: Bool = false
+    /// v1.4 Fase 2b.4: shared chat input buffer. Exposed so the "+" →
+    /// Vedhæft billede flow can stash picked image data on
+    /// `attachedImage`, and so the preview row can read + clear it.
+    var inputBuffer: ChatInputBuffer? = nil
 
     @FocusState private var inputFocused: Bool
 
@@ -36,33 +38,41 @@ struct ChatCommandBar: View {
         // inside the input row: "+", text, "Fast" mode label, mic. Send
         // happens via Enter. History / pin / close moved to the chat
         // window's top-right header (see `ChatView.chatTopBar`).
-        HStack(spacing: 10) {
-            plusMenu
+        VStack(alignment: .leading, spacing: 6) {
+            if let inputBuffer, let imageData = inputBuffer.attachedImage {
+                AttachedImagePreview(imageData: imageData) {
+                    inputBuffer.attachedImage = nil
+                }
+                .padding(.horizontal, 14)
+            }
+            HStack(spacing: 10) {
+                plusMenu
 
-            TextField(placeholder, text: $commandText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundStyle(JarvisTheme.textPrimary)
-                .focused($inputFocused)
-                .lineLimit(1...4)
-                .onSubmit(performSubmit)
+                TextField(placeholder, text: $commandText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .foregroundStyle(JarvisTheme.textPrimary)
+                    .focused($inputFocused)
+                    .lineLimit(1...4)
+                    .onSubmit(performSubmit)
 
-            Spacer(minLength: 8)
+                Spacer(minLength: 8)
 
-            modeLabel
-            micButton
+                modeLabel
+                micButton
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(JarvisTheme.surfaceElevated.opacity(0.4))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(JarvisTheme.hairline, lineWidth: 0.5)
+                    )
+            )
+            .padding(.horizontal, 14)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            Capsule(style: .continuous)
-                .fill(JarvisTheme.surfaceElevated.opacity(0.4))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(JarvisTheme.hairline, lineWidth: 0.5)
-                )
-        )
-        .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .onAppear {
             DispatchQueue.main.async { inputFocused = true }
@@ -173,6 +183,12 @@ struct ChatCommandBar: View {
             }
 
             Button {
+                pickImageAttachment()
+            } label: {
+                Label("Vedhæft billede", systemImage: "photo")
+            }
+
+            Button {
                 switchTo(inputKind: .screenshot, fallback: BuiltInModes.vision)
             } label: {
                 Label("Tag skærmbillede", systemImage: "camera.viewfinder")
@@ -242,6 +258,113 @@ struct ChatCommandBar: View {
         if inputKind == .document || inputKind == .screenshot {
             performSubmit()
         }
+    }
+
+    /// v1.4 Fase 2b.4: open an NSOpenPanel to pick an image file, downscale
+    /// it to a sensible max dimension, and store it as attached data on the
+    /// shared `ChatInputBuffer`. Next submit routes through
+    /// `ChatCommandRouter.runTextWithImage(...)` (added below) so the image
+    /// flows through the existing `sendTextWithImage` Gemini path.
+    private func pickImageAttachment() {
+        guard let inputBuffer else {
+            LoggingService.shared.log("Image attach requested but ChatInputBuffer not wired", level: .warning)
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.image]
+        panel.prompt = "Vedhæft"
+        panel.title = "Vælg billede"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let image = NSImage(contentsOf: url) else {
+            LoggingService.shared.log("Image attach: could not load NSImage from \(url.lastPathComponent)", level: .warning)
+            return
+        }
+        // Downscale to keep request payload sane. Gemini accepts up to ~20 MB
+        // per image; typical photos easily exceed that once base64 encoded.
+        let downscaled = Self.downscaledPNGData(image: image, maxDimension: 1280)
+        inputBuffer.attachedImage = downscaled
+        inputFocused = true
+        LoggingService.shared.log("Image attached (\(downscaled?.count ?? 0) bytes)")
+    }
+
+    // MARK: - Image preview row
+
+    /// Thumbnail of the currently-attached image with a remove button.
+    /// Lives above the command pill so the user can see what will be sent
+    /// alongside the typed text.
+    fileprivate struct AttachedImagePreview: View {
+        let imageData: Data
+        let onRemove: () -> Void
+
+        var body: some View {
+            HStack(spacing: 8) {
+                if let nsImage = NSImage(data: imageData) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 36, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(JarvisTheme.hairline, lineWidth: 0.5)
+                        )
+                }
+                Text("Billede vedhæftet")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(JarvisTheme.textSecondary)
+                Spacer(minLength: 0)
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(JarvisTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Fjern vedhæftning")
+                .accessibilityLabel("Fjern vedhæftet billede")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(JarvisTheme.surfaceElevated.opacity(0.55))
+            )
+        }
+    }
+
+    /// Fit the image into a max-dimension bounding box, preserving aspect ratio.
+    /// Returns PNG-encoded data; nil only if NSImage → bitmap bridging fails.
+    private static func downscaledPNGData(image: NSImage, maxDimension: CGFloat) -> Data? {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale = min(1.0, maxDimension / max(size.width, size.height))
+        let target = NSSize(width: size.width * scale, height: size.height * scale)
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(target.width),
+            pixelsHigh: Int(target.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        guard let rep else { return nil }
+        rep.size = target
+
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        guard let gfx = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.current = gfx
+        image.draw(in: NSRect(origin: .zero, size: target),
+                   from: NSRect(origin: .zero, size: size),
+                   operation: .copy,
+                   fraction: 1.0)
+        return rep.representation(using: .png, properties: [:])
     }
 
     // MARK: - Mic button (always visible)

@@ -18,4 +18,9 @@ final class ChatInputBuffer {
     /// True while transcription is running after stop. Keeps the mic button
     /// in a "processing" state so the user sees something is happening.
     var isTranscribing: Bool = false
+    /// v1.4 Fase 2b.4: image attached via "+" → Vedhæft billede. When non-nil
+    /// the command bar shows a thumbnail above the input and the next submit
+    /// routes through `GeminiClient.sendTextWithImage` (Vision-mode flow) with
+    /// the typed text as prompt. Cleared after a successful send.
+    var attachedImage: Data?
 }
