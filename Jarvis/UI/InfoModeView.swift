@@ -47,9 +47,16 @@ struct InfoModeView: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
-                // Claude Code runs full-width — it's content-rich
-                // (budgets, projects, tools) and deserves the whole row.
-                claudeStatsTile.fixedSize(horizontal: false, vertical: true)
+                // Claude Code splits into two focused tiles so everything
+                // fits without scrolling:
+                //   LEFT  — Sessioner & Tokens (totals, budgets, længste)
+                //   RIGHT — Projekter & Modeller (recent projects, top
+                //           tools from the latest session, per-model split)
+                HStack(alignment: .top, spacing: 12) {
+                    claudeSessionsTile
+                    claudeProjectsTile
+                }
+                .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -1039,12 +1046,13 @@ struct InfoModeView: View {
         }
     }
 
-    // MARK: - Claude Code tile
+    // MARK: - Claude Code tiles (split)
 
-    private var claudeStatsTile: some View {
+    /// Left half — usage totals + today/weekly budgets. Numbers-first view.
+    private var claudeSessionsTile: some View {
         let s = service.claudeStats
-        return tile(title: "Claude Code", icon: "sparkles", fullWidth: true) {
-            HStack(alignment: .top, spacing: 24) {
+        return tile(title: "Claude · Sessioner & Tokens", icon: "sparkles", fullWidth: true) {
+            HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
                     infoRow("I dag", value: todayLine)
                     infoRow("I alt", value: "\(formatTokens(s.totalTokens)) · \(s.totalSessions) sessioner")
@@ -1065,8 +1073,32 @@ struct InfoModeView: View {
                 budgetBar(label: "I dag", used: s.todayTokens, limit: claudeDailyLimit)
                 budgetBar(label: "Denne uge", used: s.weekTokens, limit: claudeWeeklyLimit)
             }
-            .padding(.top, 6)
+            .padding(.top, 8)
 
+            if s.longestSessionMessages > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "stopwatch")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.7))
+                    Text("Længste: \(s.longestSessionMessages) beskeder")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.7))
+                    if let date = s.longestSessionDate {
+                        Text("· \(firstSessionFormatter.string(from: date))")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.5))
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    /// Right half — recent projects, top tools from the latest session,
+    /// per-model breakdown with cache-hit ratio.
+    private var claudeProjectsTile: some View {
+        let s = service.claudeStats
+        return tile(title: "Claude · Projekter & Modeller", icon: "folder.fill", fullWidth: true) {
             if !s.recentProjects.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Seneste projekter")
@@ -1092,7 +1124,6 @@ struct InfoModeView: View {
                         }
                     }
                 }
-                .padding(.top, 6)
             }
 
             if !s.latestSessionTools.isEmpty {
@@ -1100,29 +1131,21 @@ struct InfoModeView: View {
                     Text("Top tools (seneste session)")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.7))
-                    HStack(spacing: 6) {
-                        ForEach(s.latestSessionTools) { tool in
-                            HStack(spacing: 3) {
-                                Image(systemName: toolIcon(tool.name))
-                                    .font(.caption)
-                                Text("\(tool.name)")
-                                    .font(.caption)
-                                Text("\(tool.count)")
-                                    .font(.caption2.weight(.semibold).monospaced())
-                                    .foregroundStyle(Color.white)
+                    // Wrap tool chips so they don't overflow the narrower
+                    // half-width tile. FlowLayout would be ideal; for now
+                    // split into two horizontal rows if there are more
+                    // than 4 tools.
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(chunkedTools(s.latestSessionTools, perRow: 4).enumerated()), id: \.offset) { _, chunk in
+                            HStack(spacing: 6) {
+                                ForEach(chunk) { tool in
+                                    claudeToolChip(tool)
+                                }
                             }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(JarvisTheme.surfaceBase.opacity(0.6))
-                                    .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.5))
-                            )
-                            .foregroundStyle(.white.opacity(0.85))
                         }
                     }
                 }
-                .padding(.top, 6)
+                .padding(.top, 8)
             }
 
             if !s.modelBreakdown.isEmpty {
@@ -1135,39 +1158,54 @@ struct InfoModeView: View {
                             Text(prettyModel(m.name))
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.9))
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: 76, alignment: .leading)
+                                .lineLimit(1)
                             modelBar(model: m)
-                            Spacer(minLength: 6)
+                            Spacer(minLength: 4)
                             Text(formatTokens(m.tokens))
-                                .font(.footnote.monospaced())
+                                .font(.caption.monospaced())
                                 .foregroundStyle(Color.white)
-                            Text(String(format: "cache %.0f%%", m.cacheRatio * 100))
-                                .font(.caption)
+                            Text(String(format: "%.0f%%", m.cacheRatio * 100))
+                                .font(.caption2)
                                 .foregroundStyle(Color.white.opacity(0.55))
-                                .frame(width: 60, alignment: .trailing)
+                                .frame(width: 36, alignment: .trailing)
                         }
                     }
                 }
-                .padding(.top, 6)
-            }
-
-            if s.longestSessionMessages > 0 {
-                HStack(spacing: 4) {
-                    Image(systemName: "stopwatch")
-                        .font(.caption)
-                        .foregroundStyle(Color.white.opacity(0.7))
-                    Text("Længste session: \(s.longestSessionMessages) beskeder")
-                        .font(.caption)
-                        .foregroundStyle(Color.white.opacity(0.7))
-                    if let date = s.longestSessionDate {
-                        Text("· \(firstSessionFormatter.string(from: date))")
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.5))
-                    }
-                }
-                .padding(.top, 4)
+                .padding(.top, 8)
             }
         }
+    }
+
+    /// Split the latestSessionTools list into rows of `count` so the chips
+    /// wrap inside the narrower half-width tile instead of overflowing.
+    /// Free-standing extension helper would also work but this keeps the
+    /// usage local to the Cockpit.
+    private func chunkedTools(_ tools: [ClaudeStatsSnapshot.ToolStat], perRow: Int) -> [[ClaudeStatsSnapshot.ToolStat]] {
+        guard !tools.isEmpty else { return [] }
+        return stride(from: 0, to: tools.count, by: perRow).map {
+            Array(tools[$0..<min($0 + perRow, tools.count)])
+        }
+    }
+
+    private func claudeToolChip(_ tool: ClaudeStatsSnapshot.ToolStat) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: toolIcon(tool.name))
+                .font(.caption2)
+            Text(tool.name)
+                .font(.caption2)
+            Text("\(tool.count)")
+                .font(.caption2.weight(.semibold).monospaced())
+                .foregroundStyle(Color.white)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            Capsule()
+                .fill(JarvisTheme.surfaceBase.opacity(0.6))
+                .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.5))
+        )
+        .foregroundStyle(.white.opacity(0.85))
     }
 
     /// Compact horizontal bar showing a model's share of total tokens.
