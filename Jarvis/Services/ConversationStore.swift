@@ -58,6 +58,15 @@ class ConversationStore {
             Task { @MainActor in
                 SpotlightIndexer.shared.index(conversation)
             }
+            // v1.4 Fase 3 semantic index: embed the first user message so
+            // future searches can find this conversation by topic, not just
+            // by title substring. Actor-isolated so the NLEmbedding call
+            // stays off the main thread.
+            if let firstUser = conversation.messages.first(where: { $0.role == .user })?.text {
+                Task {
+                    await SemanticIndex.shared.upsert(id: conversation.id, representativeText: firstUser)
+                }
+            }
         } catch {
             LoggingService.shared.log("Failed to save conversation: \(error)", level: .error)
         }
@@ -107,6 +116,9 @@ class ConversationStore {
         Task { @MainActor in
             SpotlightIndexer.shared.remove(id: id)
         }
+        Task {
+            await SemanticIndex.shared.remove(id: id)
+        }
     }
 
     func deleteAll() {
@@ -116,6 +128,9 @@ class ConversationStore {
         }
         Task { @MainActor in
             SpotlightIndexer.shared.clearAll()
+        }
+        Task {
+            await SemanticIndex.shared.removeAll()
         }
     }
 
