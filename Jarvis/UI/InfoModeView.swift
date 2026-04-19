@@ -458,33 +458,35 @@ struct InfoModeView: View {
 
     private var commuteTile: some View {
         tile(title: commuteTitle, icon: "house.fill", fullWidth: true) {
-            // Horizontal split so the tile is wide, not tall:
-            //   Left  — text content (stats / chips / traffic / pinned /
-            //           input). Flexible width, fills remaining space.
-            //   Right — map + charger legend. Fixed 360pt wide so the map
-            //           always has enough horizontal room to be navigable.
-            // `.fixedSize(vertical: true)` on the whole row keeps both
-            // columns aligned to the tallest natural height.
+            // Horizontal split:
+            //   Left  — stats / chips / traffic events / input. Flexible
+            //           width, uses the long axis for the traffic list so
+            //           the map doesn't have to grow vertically to match.
+            //   Right — pinned destinations stacked on TOP, then the map
+            //           below (25% shorter than before). Fixed 340pt wide.
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 8) {
                     commuteStatsColumn
                         .frame(maxWidth: .infinity, alignment: .leading)
                     commuteChipsRow
                     trafficEventsSection
-                    pinnedDestinationsRow
                     destinationInputRow
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                commuteMapColumn
-                    .frame(width: 360)
+                VStack(alignment: .leading, spacing: 10) {
+                    pinnedDestinationsRow
+                    commuteMapColumn
+                }
+                .frame(width: 340)
             }
         }
     }
 
-    /// Right-hand map column. Fills the vertical space left by the tallest
-    /// sibling in the HStack, so the map grows/shrinks with the text
-    /// content — no empty space regardless of what's on the left.
+    /// Map + charger legend. Fixed 255pt tall (25% shorter than the
+    /// previous 340pt so the whole tile fits on a laptop screen without
+    /// scrolling) — the map is still zoomable, so lost area can be
+    /// recovered interactively.
     @ViewBuilder
     private var commuteMapColumn: some View {
         if let commute = service.commute, !commute.routeCoordinates.isEmpty {
@@ -495,7 +497,8 @@ struct InfoModeView: View {
                     coordinates: commute.routeCoordinates,
                     chargers: service.chargers
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity)
+                .frame(height: 255)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
@@ -505,7 +508,6 @@ struct InfoModeView: View {
                     chargerLegend
                 }
             }
-            .frame(minHeight: 340)
         } else {
             // Placeholder keeps the column reserved while the route is
             // still computing — otherwise the left column would reflow
@@ -524,7 +526,7 @@ struct InfoModeView: View {
                             .foregroundStyle(Color.white.opacity(0.55))
                     }
                 )
-                .frame(minHeight: 340)
+                .frame(height: 255)
         }
     }
 
@@ -595,7 +597,7 @@ struct InfoModeView: View {
                 return (dest, est)
             }
             if !cards.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Image(systemName: "mappin.and.ellipse")
                             .font(.caption)
@@ -605,13 +607,15 @@ struct InfoModeView: View {
                             .foregroundStyle(Color.white.opacity(0.85))
                         Spacer(minLength: 0)
                     }
-                    HStack(alignment: .top, spacing: 8) {
+                    // Stacked vertically so the cards fill the narrow right
+                    // column — leaves room for the stats/traffic content on
+                    // the left "next to them at the top".
+                    VStack(alignment: .leading, spacing: 6) {
                         ForEach(cards, id: \.0.id) { (dest, est) in
                             pinnedDestinationCard(destination: dest, estimate: est)
                         }
                     }
                 }
-                .padding(.top, 8)
             }
         }
     }
