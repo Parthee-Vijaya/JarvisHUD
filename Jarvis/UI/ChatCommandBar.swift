@@ -391,7 +391,10 @@ struct ChatCommandBar: View {
 
     private var micColor: Color {
         if isTranscribing { return JarvisTheme.textMuted }
-        return isRecording ? JarvisTheme.criticalGlow : JarvisTheme.accent
+        // v1.4 Fase 2c: idle mic reads as a regular secondary icon — not a
+        // brand-coloured call-to-action. Accent is reserved for the "+" menu
+        // background and the recording red state.
+        return isRecording ? JarvisTheme.criticalGlow : JarvisTheme.textSecondary
     }
 
     private var micHelp: String {

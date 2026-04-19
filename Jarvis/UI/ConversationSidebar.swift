@@ -85,50 +85,75 @@ struct ConversationSidebar: View {
         .padding(.bottom, 10)
     }
 
-    // MARK: - Quick rows (Ny chat, Mine ting)
+    // MARK: - Quick rows (Ny chat primary CTA, Mine ting)
 
+    /// v1.4 Fase 2c polish: promote "Ny chat" to a proper primary action
+    /// button — bigger, brand-accent-tinted, keyboard-shortcut-hinted. Sits
+    /// directly under the search field so it's the first thing the eye
+    /// catches when the sidebar opens.
     private var quickRows: some View {
-        VStack(spacing: 2) {
-            quickRow(
-                title: "Ny chat",
-                icon: "square.and.pencil",
-                highlighted: true,
-                action: { onNewChat?() }
-            )
-            .disabled(onNewChat == nil)
-            quickRow(
-                title: "Mine ting",
-                icon: "star",
-                highlighted: false,
-                action: {}  // Placeholder: starred conversations feature lands in a follow-up.
-            )
-            .disabled(true)
-            .opacity(0.6)
+        VStack(spacing: 6) {
+            newChatButton
+            mineTingRow
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 14)
     }
 
-    private func quickRow(title: String, icon: String, highlighted: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private var newChatButton: some View {
+        Button {
+            onNewChat?()
+        } label: {
             HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(highlighted ? JarvisTheme.textPrimary : JarvisTheme.textSecondary)
-                    .frame(width: 18)
-                Text(title)
-                    .font(.system(size: 13, weight: highlighted ? .semibold : .regular))
-                    .foregroundStyle(highlighted ? JarvisTheme.textPrimary : JarvisTheme.textSecondary)
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Ny chat")
+                    .font(.system(size: 14, weight: .semibold))
                 Spacer()
+                Text("⌘N")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(JarvisTheme.textPrimary.opacity(0.6))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .foregroundStyle(JarvisTheme.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(highlighted ? JarvisTheme.surfaceElevated.opacity(0.9) : Color.clear)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(JarvisTheme.accent.opacity(0.22))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(JarvisTheme.accent.opacity(0.45), lineWidth: 0.75)
+                    )
             )
         }
         .buttonStyle(.plain)
+        .keyboardShortcut("n", modifiers: .command)
+        .disabled(onNewChat == nil)
+        .help("Ny samtale (⌘N)")
+        .accessibilityLabel("Ny chat")
+        .accessibilityHint("Starter en ny tom samtale")
+    }
+
+    private var mineTingRow: some View {
+        Button(action: {}) {
+            HStack(spacing: 10) {
+                Image(systemName: "star")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(JarvisTheme.textMuted)
+                    .frame(width: 18)
+                Text("Mine ting")
+                    .font(.system(size: 12))
+                    .foregroundStyle(JarvisTheme.textMuted)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+        .disabled(true)
+        .opacity(0.7)
+        .accessibilityHidden(true)
     }
 
     // MARK: - Section label
@@ -227,11 +252,15 @@ struct ConversationSidebar: View {
 
     // MARK: - Avatar footer
 
+    /// Shows the user's nickname (default "P") next to a circular avatar.
+    /// Kept short so the sidebar width stays tight — full name was too noisy
+    /// in the Gemini reference layout and clashed with the short-nickname
+    /// greeting ("Hej P") up top.
     private var avatarFooter: some View {
         HStack(spacing: 10) {
             avatar
-            Text(Self.fullUserName)
-                .font(.system(size: 12, weight: .medium))
+            Text(Self.displayNickname)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundStyle(JarvisTheme.textPrimary)
                 .lineLimit(1)
             Spacer()
@@ -240,37 +269,24 @@ struct ConversationSidebar: View {
         .padding(.vertical, 10)
     }
 
-    /// Circular avatar with the user's first initial on a dynamic tint —
-    /// avoids hitting the user's photo library / NSUser asset, keeps the
-    /// footer self-contained. Future: read `NSFullUserName`'s contacts
-    /// photo if the user opts in.
+    /// Circular avatar with the user's first initial on a muted tint. v1.4
+    /// Fase 2c swapped the earlier amber-gradient fill for a neutral
+    /// surface-elevated background so the avatar doesn't compete visually
+    /// with the brand-accent elements elsewhere.
     private var avatar: some View {
         ZStack {
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [JarvisTheme.accent, JarvisTheme.accentBright],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            Text(Self.firstInitial)
+                .fill(JarvisTheme.surfaceElevated)
+                .overlay(Circle().stroke(JarvisTheme.hairline, lineWidth: 0.5))
+            Text(Self.displayNickname)
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(JarvisTheme.textPrimary)
         }
-        .frame(width: 26, height: 26)
+        .frame(width: 28, height: 28)
     }
 
-    private static var fullUserName: String {
-        let full = NSFullUserName().trimmingCharacters(in: .whitespaces)
-        return full.isEmpty ? NSUserName() : full
-    }
-
-    private static var firstInitial: String {
-        guard let first = fullUserName.split(separator: " ").first,
-              let ch = first.first else {
-            return "?"
-        }
-        return String(ch).uppercased()
-    }
+    /// User-preferred short nickname shown both on the avatar and the
+    /// footer label. Hardcoded to "P" per user preference (2026-04-19);
+    /// future Settings surface lets other users set their own.
+    private static let displayNickname: String = "P"
 }
