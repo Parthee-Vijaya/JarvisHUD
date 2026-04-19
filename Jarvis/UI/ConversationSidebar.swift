@@ -20,6 +20,23 @@ struct ConversationSidebar: View {
     @State private var hoveringID: UUID?
     @State private var searchText: String = ""
 
+    /// v1.4 Fase 3: IDs of conversations surfaced by the semantic fallback
+    /// (cosine-similarity against `SemanticIndex`) for the current `searchText`.
+    /// When a row renders, we look up its id here to decide whether to show
+    /// the small sparkle badge that signals "this match came from semantic
+    /// search, not a title substring".
+    ///
+    /// Kept as a `Set` because the sidebar row lookup is hot — rendering
+    /// budget for the sidebar is ~16ms per frame, and a hash-set lookup
+    /// beats a linear scan every time the list re-renders during typing.
+    @State private var semanticMatchIDs: Set<UUID> = []
+
+    /// Preserves the cosine-ranked order of semantic matches so that the
+    /// sidebar list shows them in descending similarity — the two substring
+    /// sets and semantic sets are merged in `FilterResult.ordered(...)` but
+    /// we need the ordering input to come from here.
+    @State private var semanticOrdered: [UUID] = []
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerControls
@@ -33,6 +50,12 @@ struct ConversationSidebar: View {
         }
         .frame(width: 248)
         .background(JarvisTheme.surfaceBase.opacity(0.92))
+        // v1.4 Fase 3 semantic fallback: when typing, we defer to a 300ms
+        // debounce, then run the actor-isolated embedding search off the
+        // main thread. The `.task(id:)` modifier cancels in-flight work when
+        // `searchText` changes again mid-debounce, so we don't spend
+        // compute on keystrokes the user has already superseded.
+        .task(id: searchText) { await refreshSemanticMatches() }
     }
 
     // MARK: - Top controls (sidebar toggle)
@@ -186,10 +209,117 @@ struct ConversationSidebar: View {
         }
     }
 
+    /// Ordered list of conversations matching the current `searchText`.
+    ///
+    /// Two-tier search (v1.4 Fase 3):
+    ///  1. Instant case-insensitive substring match on `meta.title` — cheap,
+    ///     predictable, no async work involved. Drives the typing-latency
+    ///     feel of the sidebar.
+    ///  2. Semantic fallback, but only when the substring tier returned
+    ///     fewer than 3 hits. The ids that should count as semantic matches
+    ///     are pre-computed in `semanticMatchIDs` by `refreshSemanticMatches`
+    ///     (triggered via `.task(id: searchText)` with a 300ms debounce).
+    ///     We never block the render on the embedding work — this property
+    ///     is purely synchronous.
     private var filteredConversations: [ConversationStore.Metadata] {
-        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        Self.filter(
+            conversations: conversations,
+            query: searchText,
+            semanticIDs: semanticMatchIDs,
+            semanticOrder: semanticOrdered
+        )
+    }
+
+    /// Threshold below which a semantic cosine score is considered too weak
+    /// to surface in the sidebar. 0.35 was picked empirically — on the
+    /// Danish sentence-embedding model, scores above 0.35 tend to reflect
+    /// genuine topical overlap rather than noise.
+    static let semanticScoreFloor: Double = 0.35
+
+    /// Minimum number of substring hits required before we skip the
+    /// semantic fallback entirely. If the user's query already matches
+    /// several conversation titles, the semantic tier adds noise rather
+    /// than signal.
+    static let substringSatisfactionThreshold = 3
+
+    /// Pure filter — no `@State`, no SwiftUI, no actor. Centralising the
+    /// merge logic here gives us a testable unit that doesn't need
+    /// `NLEmbedding` or the real `SemanticIndex`; tests supply the
+    /// `semanticIDs` / `semanticOrder` directly.
+    static func filter(
+        conversations: [ConversationStore.Metadata],
+        query rawQuery: String,
+        semanticIDs: Set<UUID>,
+        semanticOrder: [UUID]
+    ) -> [ConversationStore.Metadata] {
+        let query = rawQuery.trimmingCharacters(in: .whitespaces).lowercased()
         guard !query.isEmpty else { return conversations }
-        return conversations.filter { $0.title.lowercased().contains(query) }
+
+        // Tier 1: substring match on title. Preserves the caller-supplied
+        // order (which is already newest-first from `loadAllMetadata`).
+        let substringMatches = conversations.filter { $0.title.lowercased().contains(query) }
+        if substringMatches.count >= substringSatisfactionThreshold {
+            return substringMatches
+        }
+
+        // Tier 2: semantic fallback. Merge in ids from `semanticIDs` that
+        // weren't already covered by the substring tier, ordered by the
+        // cosine-rank `semanticOrder` so the most-similar matches lead.
+        let substringIDs = Set(substringMatches.map(\.id))
+        let byID = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0) })
+
+        var tail: [ConversationStore.Metadata] = []
+        tail.reserveCapacity(semanticIDs.count)
+        for id in semanticOrder where semanticIDs.contains(id) && !substringIDs.contains(id) {
+            // Silently drop ids that no longer exist in `conversations` —
+            // e.g. the conversation was just deleted between the semantic
+            // call firing and the view re-rendering. Filtering in
+            // `byID[id]` keeps that invariant without tripping a crash.
+            if let meta = byID[id] {
+                tail.append(meta)
+            }
+        }
+
+        return substringMatches + tail
+    }
+
+    /// Runs after each `searchText` change (300ms debounce, cancellable).
+    /// Populates `semanticMatchIDs` / `semanticOrdered` based on the
+    /// current substring results. Does nothing when the substring tier is
+    /// already satisfied — the UI will never consult the semantic state
+    /// in that case, so the embedding call would be pure waste.
+    private func refreshSemanticMatches() async {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else {
+            if !semanticMatchIDs.isEmpty { semanticMatchIDs = [] }
+            if !semanticOrdered.isEmpty { semanticOrdered = [] }
+            return
+        }
+
+        // 300ms debounce. If the user keeps typing, this task is cancelled
+        // by `.task(id:)` and `Task.sleep` throws `CancellationError` — we
+        // catch via `try?` and silently abandon the stale run.
+        try? await Task.sleep(for: .milliseconds(300))
+        if Task.isCancelled { return }
+
+        // Skip the semantic call entirely when we already have enough
+        // substring matches (fast path mirrors the filter logic).
+        let lowercased = query.lowercased()
+        let substringCount = conversations.reduce(0) { acc, meta in
+            acc + (meta.title.lowercased().contains(lowercased) ? 1 : 0)
+        }
+        if substringCount >= Self.substringSatisfactionThreshold {
+            if !semanticMatchIDs.isEmpty { semanticMatchIDs = [] }
+            if !semanticOrdered.isEmpty { semanticOrdered = [] }
+            return
+        }
+
+        let matches = await SemanticIndex.shared.search(query: query, topK: 8)
+        if Task.isCancelled { return }
+
+        let filtered = matches.filter { $0.score >= Self.semanticScoreFloor }
+        semanticOrdered = filtered.map(\.id)
+        semanticMatchIDs = Set(filtered.map(\.id))
     }
 
     // MARK: - Row
@@ -197,22 +327,36 @@ struct ConversationSidebar: View {
     private func row(_ meta: ConversationStore.Metadata) -> some View {
         let isCurrent = meta.id == currentID
         let isHovering = hoveringID == meta.id
+        // v1.4 Fase 3: when a conversation only appears because of the
+        // semantic fallback (no title substring match), mark it visually so
+        // the user understands *why* it surfaced. Keeps the affordance
+        // subtle — just a small sparkle glyph, not a noisy label.
+        let isSemantic = semanticMatchIDs.contains(meta.id)
 
         return HStack(spacing: 6) {
             Button { onSelect(meta.id) } label: {
-                Text(meta.title)
-                    .font(.system(size: 13, weight: isCurrent ? .semibold : .regular))
-                    .foregroundStyle(isCurrent ? JarvisTheme.textPrimary : JarvisTheme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 7)
-                    .padding(.horizontal, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(isCurrent ? JarvisTheme.surfaceElevated.opacity(0.9) :
-                                  (isHovering ? JarvisTheme.surfaceElevated.opacity(0.4) : Color.clear))
-                    )
+                HStack(spacing: 6) {
+                    Text(meta.title)
+                        .font(.system(size: 13, weight: isCurrent ? .semibold : .regular))
+                        .foregroundStyle(isCurrent ? JarvisTheme.textPrimary : JarvisTheme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if isSemantic {
+                        Image(systemName: "sparkle")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(JarvisTheme.accent.opacity(0.85))
+                            .help("Semantisk match — fundet via emnelighed, ikke titel")
+                            .accessibilityLabel("semantisk match")
+                    }
+                }
+                .padding(.vertical, 7)
+                .padding(.horizontal, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isCurrent ? JarvisTheme.surfaceElevated.opacity(0.9) :
+                              (isHovering ? JarvisTheme.surfaceElevated.opacity(0.4) : Color.clear))
+                )
             }
             .buttonStyle(.plain)
 
