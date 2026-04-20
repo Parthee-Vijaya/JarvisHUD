@@ -55,17 +55,17 @@ struct UltronNyhederTile: View {
                 NSWorkspace.shared.open(url)
             }
         } label: {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
                 sourceChip(headline.source)
                 Text(headline.title)
-                    .font(.custom(UltronTheme.FontName.serifRoman, size: 14))
+                    .font(.custom(UltronTheme.FontName.serifRoman, size: 12.5))
                     .foregroundStyle(UltronTheme.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(ageLabel(for: headline))
-                    .font(UltronTheme.Typography.kvLabel())
+                    .font(.custom(UltronTheme.FontName.monoRegular, size: 9.5))
                     .foregroundStyle(UltronTheme.textMute)
                     .fixedSize()
             }

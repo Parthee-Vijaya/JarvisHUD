@@ -1,3 +1,4 @@
+import Darwin
 import SwiftUI
 
 /// Unified Ultron window — three tabs (Cockpit / Stemme / Chat) share
@@ -12,6 +13,8 @@ import SwiftUI
 /// `ultron-screen` so the window opens on whichever tab was last active.
 struct UltronMainWindow: View {
     @Bindable var infoService: InfoModeService
+    let audioLevel: AudioLevelMonitor
+    let waveform: WaveformBuffer
     let onClose: () -> Void
 
     @State private var activeTab: UltronTab = UltronMainWindow.restoreTab()
@@ -35,7 +38,10 @@ struct UltronMainWindow: View {
                     case .cockpit:
                         UltronCockpitView(service: infoService, onClose: onClose)
                     case .voice:
-                        UltronVoiceHost()
+                        UltronVoiceHost(
+                            audioLevel: audioLevel,
+                            waveform: waveform
+                        )
                     case .chat:
                         UltronChatHost()
                     }
@@ -106,19 +112,76 @@ struct UltronMainWindow: View {
 
 // MARK: - Tab content hosts
 
-/// Placeholder hosts for tabs 2 and 3. These swap to the real
-/// `UltronVoiceView` / `UltronChatView` once the parallel agents land
-/// their files — the type names match so this compiles either way.
+/// Voice tab host — wires the real `AudioLevelMonitor` + `WaveformBuffer`
+/// (owned by `HUDWindowController`) into the Ultron voice card so the
+/// waveform pulses with live mic input, the noise dB label reads RMS in
+/// dBFS, and the mic label names the actual Mac model.
 private struct UltronVoiceHost: View {
+    let audioLevel: AudioLevelMonitor
+    let waveform: WaveformBuffer
+
     @State private var state: UltronVoiceState = .idle
 
     var body: some View {
         ZStack {
             UltronTheme.rootBackground.ignoresSafeArea()
-            UltronVoiceView(state: $state)
+            UltronVoiceView(
+                state: $state,
+                waveform: sampledWaveform,
+                inputMic: Self.macModelName,
+                noiseDB: noiseDB,
+                confidencePct: confidenceFromLevel
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    /// Downsample the 200-bucket `WaveformBuffer` to the 48 bars the
+    /// Ultron strip expects. Normalises -1…1 peaks to 0…1 amplitudes.
+    private var sampledWaveform: [Double] {
+        let samples = waveform.samples
+        guard !samples.isEmpty else { return [] }
+        let target = 48
+        return (0..<target).map { i in
+            let idx = Int(Double(i) * Double(samples.count - 1) / Double(target - 1))
+            return Double(abs(samples[idx]))
+        }
+    }
+
+    /// Convert the smoothed RMS (0…1) to a dBFS integer for the meta row.
+    /// Level=0 floor = -80 dB.
+    private var noiseDB: Int {
+        let lvl = max(0.0001, audioLevel.level)
+        return max(-80, Int((20 * log10(lvl)).rounded()))
+    }
+
+    /// Rough "mic sikkerhed" proxy — maps level into 0…100 via a squashed
+    /// log curve. Real speech-to-text confidence replaces this once the
+    /// voice pipeline is wired in.
+    private var confidenceFromLevel: Int {
+        let dB = Double(noiseDB)
+        let normalised = max(0, min(1, (dB + 60) / 60))
+        return Int((60 + normalised * 40).rounded())
+    }
+
+    /// `sysctl hw.model` one-shot — mapped to a friendly family name so
+    /// the meta row reads "Mik: MacBook Pro" not "Mik: MacBookPro18,2".
+    static let macModelName: String = {
+        var size: size_t = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        guard size > 0 else { return "Mac" }
+        var buffer = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.model", &buffer, &size, nil, 0)
+        let raw = String(cString: buffer)
+        if raw.hasPrefix("MacBookAir")   { return "MacBook Air" }
+        if raw.hasPrefix("MacBookPro")   { return "MacBook Pro" }
+        if raw.hasPrefix("MacBook")      { return "MacBook" }
+        if raw.hasPrefix("Macmini")      { return "Mac mini" }
+        if raw.hasPrefix("iMac")         { return "iMac" }
+        if raw.hasPrefix("MacPro")       { return "Mac Pro" }
+        if raw.hasPrefix("MacStudio")    { return "Mac Studio" }
+        return raw.isEmpty ? "Mac" : raw
+    }()
 }
 
 private struct UltronChatHost: View {

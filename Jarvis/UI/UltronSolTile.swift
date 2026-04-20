@@ -30,12 +30,12 @@ struct UltronSolTile: View {
                         tone: .cream
                     ) {
                         Image(systemName: "sun.max.fill")
-                            .font(.system(size: 30, weight: .regular))
+                            .font(.system(size: 22, weight: .regular))
                             .foregroundStyle(UltronTheme.accent)
                             .symbolRenderingMode(.hierarchical)
                     }
                     Text("Dagslys i dag")
-                        .font(UltronTheme.Typography.caption(size: 15))
+                        .font(UltronTheme.Typography.caption(size: 13))
                         .foregroundStyle(UltronTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                     if let sunrise = today.sunrise, let sunset = today.sunset {

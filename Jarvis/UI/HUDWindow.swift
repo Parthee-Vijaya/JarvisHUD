@@ -349,7 +349,11 @@ class HUDWindowController {
         // full unified `UltronMainWindow` (Cockpit + Voice + Chat tabs).
         let useUltron = UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
         let view: AnyView = useUltron
-            ? AnyView(UltronMainWindow(infoService: infoModeService) { [weak self] in self?.close() })
+            ? AnyView(UltronMainWindow(
+                infoService: infoModeService,
+                audioLevel: audioLevel,
+                waveform: waveform
+            ) { [weak self] in self?.close() })
             : AnyView(
                 InfoModeView(service: infoModeService) { [weak self] in self?.close() }
                     .jarvisHUDBackground(showReticle: false)

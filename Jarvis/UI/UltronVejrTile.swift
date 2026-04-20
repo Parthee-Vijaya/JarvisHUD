@@ -24,12 +24,12 @@ struct UltronVejrTile: View {
                         tone: .amber
                     ) {
                         Image(systemName: WeatherCode.symbol(for: w.current.weatherCode))
-                            .font(.system(size: 30, weight: .regular))
+                            .font(.system(size: 22, weight: .regular))
                             .foregroundStyle(UltronTheme.TileTone.amber.color)
                             .symbolRenderingMode(.hierarchical)
                     }
                     Text(caption(for: w.current.weatherCode))
-                        .font(UltronTheme.Typography.caption(size: 15))
+                        .font(UltronTheme.Typography.caption(size: 13))
                         .foregroundStyle(UltronTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                     UltronKVGrid(pairs: kvPairs(for: w))

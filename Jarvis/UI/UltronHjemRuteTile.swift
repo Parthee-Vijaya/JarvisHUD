@@ -41,19 +41,19 @@ struct UltronHjemRuteTile: View {
     // MARK: - Spec column (200pt)
 
     private func specColumn(_ c: CommuteEstimate) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             UltronBigNumberBlock(
                 number: "\(Int((c.expectedTravelTime / 60).rounded()))",
                 unit: "min",
                 tone: .rose
             ) {
                 Image(systemName: "house.fill")
-                    .font(.system(size: 26, weight: .regular))
+                    .font(.system(size: 20, weight: .regular))
                     .foregroundStyle(UltronTheme.TileTone.rose.color)
                     .symbolRenderingMode(.hierarchical)
             }
             Text("ETA \(etaString(for: c))")
-                .font(UltronTheme.Typography.caption(size: 15))
+                .font(UltronTheme.Typography.caption(size: 13))
                 .foregroundStyle(UltronTheme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
             UltronKVGrid(pairs: kvPairs(for: c), columns: 1)
@@ -69,7 +69,7 @@ struct UltronHjemRuteTile: View {
             coordinates: c.routeCoordinates,
             chargers: chargers
         )
-        .frame(height: 220)
+        .frame(minHeight: 160, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)

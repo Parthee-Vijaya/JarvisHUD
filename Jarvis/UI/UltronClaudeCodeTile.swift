@@ -36,16 +36,19 @@ struct UltronClaudeCodeTile: View {
     }
 
     private func statCell(value: String, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(UltronTheme.Typography.bigNumber(size: 28))
-                .tracking(-0.4)
+                .font(UltronTheme.Typography.bigNumber(size: 22))
+                .tracking(-0.3)
                 .foregroundStyle(UltronTheme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Text(label)
-                .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
-                .tracking(0.6)
+                .font(.custom(UltronTheme.FontName.monoRegular, size: 9.5))
+                .tracking(0.5)
                 .textCase(.uppercase)
                 .foregroundStyle(UltronTheme.textFaint)
+                .lineLimit(1)
         }
     }
 

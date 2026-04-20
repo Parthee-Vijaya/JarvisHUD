@@ -25,12 +25,12 @@ struct UltronLuftMaaneTile: View {
                     tone: .lilac
                 ) {
                     Image(systemName: moon.phase.symbol)
-                        .font(.system(size: 30, weight: .regular))
+                        .font(.system(size: 22, weight: .regular))
                         .foregroundStyle(UltronTheme.TileTone.lilac.color)
                         .symbolRenderingMode(.hierarchical)
                 }
                 Text(caption)
-                    .font(UltronTheme.Typography.caption(size: 15))
+                    .font(UltronTheme.Typography.caption(size: 13))
                     .foregroundStyle(UltronTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
                 UltronKVGrid(pairs: kvPairs)

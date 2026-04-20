@@ -47,17 +47,19 @@ struct UltronFlyTile: View {
     // MARK: - Row
 
     private func row(for ac: Aircraft) -> some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 12) {
             compassRose(bearing: ac.bearingDeg)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(ac.routeLabel)
-                    .font(.custom(UltronTheme.FontName.serifRoman, size: 14.5))
+                    .font(.custom(UltronTheme.FontName.serifRoman, size: 13))
                     .foregroundStyle(UltronTheme.text)
+                    .lineLimit(1)
                 Text(subtitle(for: ac))
-                    .font(.custom(UltronTheme.FontName.monoRegular, size: 11))
+                    .font(.custom(UltronTheme.FontName.monoRegular, size: 10))
                     .foregroundStyle(UltronTheme.textMute)
+                    .lineLimit(1)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
             rightCluster(for: ac)
         }
     }
@@ -78,11 +80,11 @@ struct UltronFlyTile: View {
                 .stroke(UltronTheme.line, lineWidth: 1)
             Rectangle()
                 .fill(UltronTheme.accent)
-                .frame(width: 1, height: 14)
-                .offset(y: -6)
+                .frame(width: 1, height: 11)
+                .offset(y: -5)
                 .rotationEffect(.degrees(bearing))
         }
-        .frame(width: 34, height: 34)
+        .frame(width: 28, height: 28)
     }
 
     // MARK: - Right cluster (altitude + distance/bearing)
@@ -90,11 +92,13 @@ struct UltronFlyTile: View {
     private func rightCluster(for ac: Aircraft) -> some View {
         VStack(alignment: .trailing, spacing: 2) {
             Text(altitudeLine(for: ac))
-                .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
+                .font(.custom(UltronTheme.FontName.monoRegular, size: 9.5))
                 .foregroundStyle(UltronTheme.textMute)
+                .lineLimit(1)
             Text(distanceLine(for: ac))
-                .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
+                .font(.custom(UltronTheme.FontName.monoRegular, size: 9.5))
                 .foregroundStyle(UltronTheme.textMute)
+                .lineLimit(1)
         }
     }
 

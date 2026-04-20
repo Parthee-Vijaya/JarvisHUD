@@ -50,18 +50,20 @@ struct UltronTile<Content: View, Meta: View, Footer: View>: View {
                 .fill(tone.color)
                 .frame(height: 2)
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 header
                 content()
-                if !(footer is EmptyView.Type) {
-                    footer()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 0)
+                footer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.top, UltronTheme.Spacing.tilePadTop)
             .padding(.horizontal, UltronTheme.Spacing.tilePadH)
             .padding(.bottom, UltronTheme.Spacing.tilePadBottom)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: UltronTheme.Radius.tile, style: .continuous)
                 .fill(UltronTheme.ink2)
@@ -102,25 +104,27 @@ struct UltronBigNumberBlock<Icon: View>: View {
     @ViewBuilder let icon: () -> Icon
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 16) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
             icon()
-                .frame(width: 56, height: 56)
+                .frame(width: 44, height: 44)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(tone.soft)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
                                 .stroke(tone.border, lineWidth: 1)
                         )
                 )
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(number)
-                    .font(UltronTheme.Typography.bigNumber())
-                    .tracking(-0.9)   // −0.02em at 44pt ≈ −0.88pt
+                    .font(UltronTheme.Typography.bigNumber(size: 34))
+                    .tracking(-0.7)
                     .foregroundStyle(UltronTheme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 if let unit {
                     Text(unit)
-                        .font(UltronTheme.Typography.bigNumber(size: 24))
+                        .font(UltronTheme.Typography.bigNumber(size: 18))
                         .foregroundStyle(UltronTheme.textDim)
                 }
             }
@@ -138,19 +142,22 @@ struct UltronKVGrid: View {
 
     var body: some View {
         let gridColumns = Array(
-            repeating: GridItem(.flexible(), spacing: 24, alignment: .leading),
+            repeating: GridItem(.flexible(), spacing: 16, alignment: .leading),
             count: columns
         )
-        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                 HStack(alignment: .firstTextBaseline) {
                     Text(pair.label)
-                        .font(UltronTheme.Typography.kvLabel())
+                        .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
                         .foregroundStyle(UltronTheme.textFaint)
+                        .lineLimit(1)
                     Spacer(minLength: 6)
                     Text(pair.value)
-                        .font(UltronTheme.Typography.body())
+                        .font(UltronTheme.Typography.body(size: 12.5))
                         .foregroundStyle(UltronTheme.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
             }
         }

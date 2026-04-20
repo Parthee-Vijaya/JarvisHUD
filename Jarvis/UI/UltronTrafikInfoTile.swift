@@ -46,16 +46,16 @@ struct UltronTrafikInfoTile: View {
     // MARK: - Row
 
     private func row(for event: TrafficEvent) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             iconBadge(for: event.category)
             headerText(for: event)
-                .font(.custom(UltronTheme.FontName.serifRoman, size: 14))
+                .font(.custom(UltronTheme.FontName.serifRoman, size: 12.5))
                 .foregroundStyle(UltronTheme.text)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let ago = event.timeAgoLabel() {
                 Text(ago)
-                    .font(.custom(UltronTheme.FontName.monoRegular, size: 11))
+                    .font(.custom(UltronTheme.FontName.monoRegular, size: 9.5))
                     .foregroundStyle(UltronTheme.textMute)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -79,17 +79,17 @@ struct UltronTrafikInfoTile: View {
     private func iconBadge(for category: TrafficEvent.Category) -> some View {
         let tint = tintColor(for: category)
         return ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(tint.opacity(0.18))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .stroke(tint.opacity(0.45), lineWidth: 1)
                 )
             Image(systemName: symbolName(for: category))
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(tint)
         }
-        .frame(width: 28, height: 28)
+        .frame(width: 22, height: 22)
     }
 
     private func tintColor(for category: TrafficEvent.Category) -> Color {
