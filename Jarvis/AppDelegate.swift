@@ -1,4 +1,5 @@
 import AppKit
+import CoreSpotlight
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -42,6 +43,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// `handleChatVoiceToggle` push dictation transcripts back into the UI.
     private let chatInputBuffer = ChatInputBuffer()
     let locationService = LocationService()
+    /// v1.4: observes screen-lock / display-sleep so the HUD can suppress
+    /// auto-pop surfaces while the user is away. Instantiated once and kept
+    /// for the app's lifetime.
+    private let focusObserver = FocusModeObserver()
     lazy var updatesService = UpdatesService(locationService: locationService)
     lazy var infoModeService = InfoModeService(locationService: locationService)
     lazy var errorPresenter = ErrorPresenter(hudController: hudController)
@@ -160,13 +165,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let router = commandRouter {
                 Task { await router.run(mode: BuiltInModes.vision, input: prompt) }
             }
+        case "dictate-clipboard":
+            // Fire-and-forget URL entry. AppIntent callers invoke
+            // `dictateToClipboard(seconds:)` directly so they can await
+            // the transcript; the URL scheme just kicks off the flow
+            // with HUD feedback.
+            Task { _ = await dictateToClipboard(seconds: 6) }
         case "info", "cockpit":
             hudController.showInfoMode()
         case "briefing", "uptodate":
             hudController.showUptodate()
+        case "conversation":
+            // Spotlight hit or explicit jarvis://conversation?id=UUID —
+            // open the chat window and load the requested transcript.
+            guard let idString = components?.queryItems?.first(where: { $0.name == "id" })?.value,
+                  let uuid = UUID(uuidString: idString) else {
+                LoggingService.shared.log("jarvis://conversation missing id", level: .warning)
+                return
+            }
+            refreshConversationHistory()
+            hudController.showChat()
+            loadConversationIntoChat(id: uuid)
         default:
             LoggingService.shared.log("Unknown jarvis:// action: \(action)", level: .warning)
         }
+    }
+
+    /// Spotlight taps arrive as an `NSUserActivity` of type
+    /// `CSSearchableItemActionType`, not as a `jarvis://` URL — AppKit
+    /// routes them here. Pull the conversation UUID out of the activity
+    /// userInfo (`CSSearchableItemActivityIdentifier`) and open the chat.
+    nonisolated func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                                 restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType,
+              let idString = userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+              let uuid = UUID(uuidString: idString) else {
+            return false
+        }
+        MainActor.assumeIsolated {
+            refreshConversationHistory()
+            hudController.showChat()
+            loadConversationIntoChat(id: uuid)
+        }
+        return true
     }
 
     // MARK: - Pipeline Setup
@@ -190,6 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Wire the Uptodate + Info panel data sources.
         hudController.updatesService = updatesService
         hudController.infoModeService = infoModeService
+        hudController.focusObserver = focusObserver
 
         pipeline = RecordingPipeline(
             audioCapture: audioCapture,
@@ -370,6 +412,112 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 LoggingService.shared.log("Chat dictation start failed: \(error)", level: .warning)
             }
+        }
+    }
+
+    // MARK: - AppIntents helpers (v1.2.2)
+    //
+    // The three methods below back the Siri/Shortcuts intents in
+    // `JarvisAppIntents.swift`. Kept on AppDelegate (rather than free
+    // functions) so they share the same `geminiClient`, `audioCapture`,
+    // and `hudController` instances as the hotkey-driven paths — no
+    // second set of services to keep in sync.
+
+    /// Push-to-talk for a fixed `seconds` window, transcribe via Gemini,
+    /// copy the result to the system pasteboard. Returns the trimmed
+    /// transcript (empty string on mic denial or Gemini failure).
+    @MainActor
+    func dictateToClipboard(seconds: TimeInterval = 6) async -> String {
+        guard permissions.checkMicrophone() else {
+            hudController.showError("Mikrofon-tilladelse mangler")
+            return ""
+        }
+        hudController.activeModeName = "Dictation → Clipboard"
+        hudController.showRecording()
+        do {
+            try audioCapture.startRecording()
+        } catch {
+            hudController.showError("Mic fejl: \(error.localizedDescription)")
+            return ""
+        }
+        try? await Task.sleep(for: .seconds(seconds))
+        let audioData = audioCapture.stopRecording()
+        hudController.showProcessing()
+        guard !audioData.isEmpty else {
+            hudController.close()
+            return ""
+        }
+        let result = await geminiClient.sendAudio(audioData, mode: BuiltInModes.dictation)
+        switch result {
+        case .success(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(trimmed, forType: .string)
+            hudController.showConfirmation("Kopieret til udklipsholder")
+            return trimmed
+        case .failure(let error):
+            hudController.showError("Transkription fejlede: \(error.localizedDescription)")
+            return ""
+        }
+    }
+
+    /// Fetch a URL, strip tags/scripts/styles, cap at 8 KB of readable text,
+    /// then ask Gemini for a 3-bullet summary. Throws on fetch/decode/API
+    /// failure so Shortcut error branches can handle it.
+    @MainActor
+    func summarizeURL(_ url: URL) async throws -> String {
+        let (data, _) = try await URLSession.shared.data(from: url)
+        guard let raw = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .isoLatin1) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        let stripped = raw
+            .replacingOccurrences(
+                of: "<script[^>]*>[\\s\\S]*?</script>",
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "<style[^>]*>[\\s\\S]*?</style>",
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let truncated = String(stripped.prefix(8_000))
+        let prompt = """
+        Opsummer indholdet nedenfor i præcis 3 korte bullet points \
+        (hver under 20 ord). Svar på samme sprog som teksten.
+
+        Indhold:
+        \(truncated)
+        """
+        let result = await geminiClient.sendText(prompt: prompt, mode: BuiltInModes.summarize)
+        switch result {
+        case .success(let text): return text
+        case .failure(let error): throw error
+        }
+    }
+
+    /// Combine selected text + a question into a single prompt, send to
+    /// Gemini chat mode, return the reply as one string. Bypasses
+    /// ChatPipeline because Shortcuts wants a synchronous value — no
+    /// streaming surface needed here.
+    @MainActor
+    func askWithContext(selectedText: String, question: String) async throws -> String {
+        let prompt = """
+        Context:
+
+        \(selectedText)
+
+        Question: \(question)
+        """
+        let result = await geminiClient.sendText(prompt: prompt, mode: BuiltInModes.chat)
+        switch result {
+        case .success(let text): return text
+        case .failure(let error): throw error
         }
     }
 
