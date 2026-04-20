@@ -19,6 +19,7 @@ class HUDWindowController {
     var updatesService: UpdatesService?
     /// Set by AppDelegate once services exist, then passed into InfoModeView.
     var infoModeService: InfoModeService?
+    var usageTracker: UsageTracker?
     var onAgentChatSend: ((String) -> Void)?
     var onAgentApprove: (() -> Void)?
     var onAgentReject: (() -> Void)?
@@ -203,6 +204,22 @@ class HUDWindowController {
     private func presentPanel() {
         cancelAutoClose()
         if panel != nil { return }   // already visible — @Observable state updates in place
+        // v2.0 Ultron: if the user just closed the unified panel and a
+        // voice-pipeline error races in, don't resurrect the legacy
+        // corner HUD — surface silently via `hudState.currentPhase` so
+        // the next Ultron open renders the error card instead.
+        if UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true {
+            // Only suppress corner HUD for phase transitions that would
+            // have popped the small HUD. Chat / info / uptodate have
+            // their own present*Panel() paths and are unaffected.
+            switch hudState.currentPhase {
+            case .recording, .processing, .result, .confirmation, .error, .permissionError:
+                LoggingService.shared.log("Suppressing legacy corner HUD (Ultron mode)", level: .debug)
+                return
+            default:
+                break
+            }
+        }
         presentCornerPanel()
     }
 
@@ -386,6 +403,7 @@ class HUDWindowController {
                 waveform: waveform,
                 hudState: hudState,
                 speechService: speechService,
+                usageTracker: usageTracker ?? UsageTracker(),
                 chatSession: chatSession,
                 conversationHistory: conversationHistory,
                 currentConversationID: currentConversationID,

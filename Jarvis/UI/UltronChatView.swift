@@ -9,6 +9,7 @@ import SwiftUI
 /// still work standalone (the preview at the bottom of this file).
 struct UltronChatView: View {
     @Bindable var session: ChatSession
+    @Bindable var usageTracker: UsageTracker
     var conversationHistory: [ConversationStore.Metadata] = []
     var currentConversationID: UUID? = nil
     var onSend: (String) -> Void = { _ in }
@@ -19,10 +20,14 @@ struct UltronChatView: View {
 
     @State private var composerText: String = ""
     @State private var hoveredConversationID: UUID? = nil
+    @State private var sidebarCollapsed: Bool = UserDefaults.standard
+        .bool(forKey: "ultron-chat-sidebar-collapsed")
+    @State private var greetingSeed = Int(Date().timeIntervalSince1970)
     @FocusState private var composerFocused: Bool
 
     init(
         session: ChatSession?,
+        usageTracker: UsageTracker,
         conversationHistory: [ConversationStore.Metadata] = [],
         currentConversationID: UUID? = nil,
         onSend: @escaping (String) -> Void,
@@ -32,6 +37,7 @@ struct UltronChatView: View {
         onDeleteConversation: @escaping (UUID) -> Void = { _ in }
     ) {
         self._session = Bindable(session ?? ChatSession())
+        self._usageTracker = Bindable(usageTracker)
         self.conversationHistory = conversationHistory
         self.currentConversationID = currentConversationID
         self.onSend = onSend
@@ -53,17 +59,26 @@ struct UltronChatView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
-                .frame(width: 280)
-                .background(UltronTheme.ink)
-                .overlay(alignment: .trailing) {
-                    Rectangle().fill(UltronTheme.lineSoft).frame(width: 1)
-                }
+            if !sidebarCollapsed {
+                sidebar
+                    .frame(width: 280)
+                    .background(UltronTheme.ink)
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(UltronTheme.lineSoft).frame(width: 1)
+                    }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
             mainColumn
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(UltronTheme.rootBackground)
         }
         .frame(minWidth: 960, minHeight: 640)
+        .animation(.easeInOut(duration: 0.28), value: sidebarCollapsed)
+    }
+
+    private func toggleSidebar() {
+        sidebarCollapsed.toggle()
+        UserDefaults.standard.set(sidebarCollapsed, forKey: "ultron-chat-sidebar-collapsed")
     }
 
     // MARK: - Sidebar
@@ -240,12 +255,37 @@ struct UltronChatView: View {
     }
 
     private var headerBar: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
+            Button(action: toggleSidebar) {
+                Image(systemName: sidebarCollapsed
+                      ? "sidebar.left"
+                      : "sidebar.left.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(UltronTheme.textMute)
+                    .frame(width: 26, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(UltronTheme.ink2)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .stroke(UltronTheme.lineSoft, lineWidth: 1)
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(sidebarCollapsed ? "Vis historik" : "Skjul historik")
+            .keyboardShortcut("[", modifiers: .command)
+
             Text(conversationTitle)
                 .font(UltronTheme.Typography.sectionH2())
                 .foregroundStyle(UltronTheme.text)
+                .lineLimit(1)
+
             Spacer(minLength: 12)
-            if session.isStreaming {
+
+            liveStatsChip
+
+            if session.isStreaming || usageTracker.isTurnInFlight {
                 HStack(spacing: 6) {
                     Circle().fill(UltronTheme.warn).frame(width: 6, height: 6)
                     Text("skriver")
@@ -254,14 +294,41 @@ struct UltronChatView: View {
                         .foregroundStyle(UltronTheme.warn)
                 }
             }
-            Text("Sonnet 4.7 · agent")
-                .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
-                .foregroundStyle(UltronTheme.textMute)
         }
-        .padding(.horizontal, 28).padding(.vertical, 18)
+        .padding(.horizontal, 24).padding(.vertical, 14)
         .background(UltronTheme.ink)
         .overlay(alignment: .bottom) {
             Rectangle().fill(UltronTheme.lineSoft).frame(height: 1)
+        }
+    }
+
+    /// Live model + tokens + response-time chip. Reads from
+    /// `UsageTracker`'s per-turn fields so it updates the moment a
+    /// streamed or non-streamed Gemini request resolves.
+    private var liveStatsChip: some View {
+        HStack(spacing: 10) {
+            statItem(icon: "cpu", text: usageTracker.lastModelName ?? "ingen svar endnu")
+            if usageTracker.lastInputTokens > 0 || usageTracker.lastOutputTokens > 0 {
+                statItem(icon: "arrow.up.arrow.down",
+                         text: "\(usageTracker.lastInputTokens) → \(usageTracker.lastOutputTokens)")
+            }
+            if usageTracker.lastLatencyMs > 0 {
+                statItem(icon: "timer", text: "\(usageTracker.lastLatencyMs) ms")
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(Capsule().fill(UltronTheme.ink2)
+            .overlay(Capsule().stroke(UltronTheme.lineSoft, lineWidth: 1)))
+    }
+
+    private func statItem(icon: String, text: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(UltronTheme.textFaint)
+            Text(text)
+                .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
+                .foregroundStyle(UltronTheme.textMute)
         }
     }
 
@@ -292,13 +359,16 @@ struct UltronChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Hej.")
-                .font(.custom(UltronTheme.FontName.serifRoman, size: 36).weight(.light))
+        let nickname = UserDefaults.standard.string(forKey: "userNickname") ?? "P"
+        let pair = GreetingProvider.random(name: nickname, seed: greetingSeed)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(pair.hello)
+                .font(.custom(UltronTheme.FontName.serifRoman, size: 40).weight(.light))
                 .foregroundStyle(UltronTheme.text)
-            Text("Hvad skal vi lave?")
-                .font(.custom(UltronTheme.FontName.serifItalic, size: 20))
+            Text(pair.line)
+                .font(.custom(UltronTheme.FontName.serifItalic, size: 22))
                 .foregroundStyle(UltronTheme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 12)
@@ -560,6 +630,10 @@ struct UltronChatView: View {
 }
 
 #Preview("Ultron Chat — empty") {
-    UltronChatView(session: nil, onSend: { _ in })
-        .frame(width: 1200, height: 780)
+    UltronChatView(
+        session: nil,
+        usageTracker: UsageTracker(),
+        onSend: { _ in }
+    )
+    .frame(width: 1200, height: 780)
 }

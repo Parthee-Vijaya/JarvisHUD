@@ -19,6 +19,7 @@ struct UltronMainWindow: View {
     let waveform: WaveformBuffer
     @Bindable var hudState: HUDState
     @Bindable var speechService: SpeechRecognitionService
+    @Bindable var usageTracker: UsageTracker
     let chatSession: ChatSession?
     let conversationHistory: [ConversationStore.Metadata]
     let currentConversationID: UUID?
@@ -33,6 +34,7 @@ struct UltronMainWindow: View {
 
     @State private var activeTab: UltronTab = UltronMainWindow.restoreTab()
     @State private var showHotkeySheet: Bool = false
+    @State private var isReloading: Bool = false
 
     var body: some View {
         ZStack {
@@ -46,7 +48,9 @@ struct UltronMainWindow: View {
                     onHotkeySheet: { showHotkeySheet.toggle() },
                     onClose: onClose,
                     onMinimize: onMinimize,
-                    onZoom: onZoom
+                    onZoom: onZoom,
+                    onReload: reload,
+                    isReloading: isReloading
                 )
 
                 // Tab content — full-flex below the top bar
@@ -59,11 +63,13 @@ struct UltronMainWindow: View {
                             audioLevel: audioLevel,
                             waveform: waveform,
                             hudState: hudState,
-                            speechService: speechService
+                            speechService: speechService,
+                            usageTracker: usageTracker
                         )
                     case .chat:
                         UltronChatHost(
                             session: chatSession,
+                            usageTracker: usageTracker,
                             conversationHistory: conversationHistory,
                             currentConversationID: currentConversationID,
                             onSend: onChatSend,
@@ -89,6 +95,29 @@ struct UltronMainWindow: View {
         ))
         .onChange(of: activeTab) { _, new in
             UserDefaults.standard.set(new.rawValue, forKey: UltronMainWindow.screenKey)
+        }
+    }
+
+    // MARK: - Reload
+
+    /// Tab-aware reload: cockpit refreshes all data, voice resets the
+    /// transcript / audio meters, chat clears the active session.
+    private func reload() {
+        guard !isReloading else { return }
+        isReloading = true
+        Task {
+            switch activeTab {
+            case .cockpit:
+                await infoService.refresh(force: true)
+            case .voice:
+                speechService.reset()
+                audioLevel.reset()
+                waveform.reset()
+            case .chat:
+                chatSession?.messages.removeAll()
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await MainActor.run { isReloading = false }
         }
     }
 
@@ -157,6 +186,7 @@ private struct UltronVoiceHost: View {
     let waveform: WaveformBuffer
     @Bindable var hudState: HUDState
     @Bindable var speechService: SpeechRecognitionService
+    @Bindable var usageTracker: UsageTracker
 
     @State private var inputName: String = AudioDeviceInfo.currentInputName() ?? "—"
     @State private var outputName: String = AudioDeviceInfo.currentOutputName() ?? "—"
@@ -174,7 +204,11 @@ private struct UltronVoiceHost: View {
                 duration: derivedDuration,
                 inputMic: inputName,
                 outputSpeaker: outputName,
-                noiseDB: noiseDB
+                noiseDB: noiseDB,
+                modelName: usageTracker.lastModelName ?? "—",
+                inputTokens: usageTracker.lastInputTokens,
+                outputTokens: usageTracker.lastOutputTokens,
+                latencyMs: usageTracker.lastLatencyMs
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -320,6 +354,7 @@ private struct UltronVoiceHost: View {
 
 private struct UltronChatHost: View {
     let session: ChatSession?
+    @Bindable var usageTracker: UsageTracker
     let conversationHistory: [ConversationStore.Metadata]
     let currentConversationID: UUID?
     let onSend: (String) -> Void
@@ -333,6 +368,7 @@ private struct UltronChatHost: View {
             UltronTheme.rootBackground.ignoresSafeArea()
             UltronChatView(
                 session: session,
+                usageTracker: usageTracker,
                 conversationHistory: conversationHistory,
                 currentConversationID: currentConversationID,
                 onSend: onSend,

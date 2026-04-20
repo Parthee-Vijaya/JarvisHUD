@@ -19,6 +19,8 @@ struct UltronTopBar: View {
     var onClose: () -> Void = {}
     var onMinimize: () -> Void = {}
     var onZoom: () -> Void = {}
+    var onReload: () -> Void = {}
+    var isReloading: Bool = false
 
     @State private var now = Date()
     @State private var trafficHovering = false
@@ -32,6 +34,7 @@ struct UltronTopBar: View {
             Spacer(minLength: 12)
             livePill
             timeText
+            reloadButton
             hotkeyHint
         }
         .padding(.horizontal, 22)
@@ -156,6 +159,32 @@ struct UltronTopBar: View {
             .foregroundStyle(UltronTheme.textMute)
     }
 
+    private var reloadButton: some View {
+        Button(action: onReload) {
+            Image(systemName: isReloading ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(UltronTheme.textMute)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(UltronTheme.ink2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .stroke(UltronTheme.lineSoft, lineWidth: 1)
+                        )
+                )
+                .rotationEffect(.degrees(isReloading ? 360 : 0))
+                .animation(isReloading
+                    ? .linear(duration: 1.1).repeatForever(autoreverses: false)
+                    : .default,
+                    value: isReloading)
+        }
+        .buttonStyle(.plain)
+        .help("Genindlæs data")
+        .accessibilityLabel("Genindlæs")
+    }
+
     private var hotkeyHint: some View {
         Button(action: onHotkeySheet) {
             HStack(spacing: 6) {
@@ -199,7 +228,7 @@ enum UltronTab: String, CaseIterable, Identifiable, Codable {
     var title: String {
         switch self {
         case .cockpit: return "Cockpit"
-        case .voice:   return "Stemme"
+        case .voice:   return "Voice"
         case .chat:    return "Chat"
         }
     }
