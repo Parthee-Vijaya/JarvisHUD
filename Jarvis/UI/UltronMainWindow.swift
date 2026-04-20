@@ -66,7 +66,8 @@ struct UltronMainWindow: View {
                             waveform: waveform,
                             hudState: hudState,
                             speechService: speechService,
-                            usageTracker: usageTracker
+                            usageTracker: usageTracker,
+                            onSendToChat: handoffVoiceToChat
                         )
                     case .chat:
                         UltronChatHost(
@@ -109,6 +110,19 @@ struct UltronMainWindow: View {
                 activeTab = tab
             }
         }
+    }
+
+    // MARK: - Voice → Chat handoff
+
+    /// Push the given transcript into the active Chat session as a
+    /// user message, fire the chat router, then switch to the Chat
+    /// tab. Called from the "Send til chat" button on the Voice HUD.
+    private func handoffVoiceToChat(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onChatSend(trimmed)
+        activeTab = .chat
+        speechService.reset()
     }
 
     // MARK: - Reload
@@ -232,6 +246,7 @@ private struct UltronVoiceHost: View {
     @Bindable var hudState: HUDState
     @Bindable var speechService: SpeechRecognitionService
     @Bindable var usageTracker: UsageTracker
+    let onSendToChat: (String) -> Void
 
     @State private var inputName: String = AudioDeviceInfo.currentInputName() ?? "—"
     @State private var outputName: String = AudioDeviceInfo.currentOutputName() ?? "—"
@@ -253,7 +268,9 @@ private struct UltronVoiceHost: View {
                 modelName: usageTracker.lastModelName ?? "—",
                 inputTokens: usageTracker.lastInputTokens,
                 outputTokens: usageTracker.lastOutputTokens,
-                latencyMs: usageTracker.lastLatencyMs
+                latencyMs: usageTracker.lastLatencyMs,
+                onSendToChat: onSendToChat,
+                liveTranscript: speechService.transcript
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
