@@ -4,6 +4,8 @@
 <dict>
     <key>LSUIElement</key>
     <true/>
+    <key>ATSApplicationFontsPath</key>
+    <string>Fonts/</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Jarvis needs microphone access to record your voice for dictation and AI commands.</string>
     <key>NSScreenCaptureUsageDescription</key>

@@ -167,6 +167,37 @@ class HUDWindowController {
         hudState.isVisible = false
     }
 
+    /// Minimize the hosting panel to the Dock — wired to the yellow
+    /// traffic-light dot in `UltronTopBar`.
+    func minimizePanel() {
+        panel?.miniaturize(nil)
+    }
+
+    /// Toggle the panel between its default size and the current screen's
+    /// visible frame — wired to the green traffic-light dot in `UltronTopBar`.
+    /// Uses `setFrame` directly instead of `zoom(_:)` because the panel is
+    /// created with a `.borderless` style mask and AppKit's zoom path doesn't
+    /// produce useful geometry for panel-class windows.
+    func zoomPanel() {
+        guard let panel,
+              let screen = panel.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        if panel.frame == visible {
+            // Restore to a roughly-centred 1200×780 frame — the Ultron min size.
+            let w: CGFloat = 1200
+            let h: CGFloat = 780
+            let origin = CGPoint(
+                x: visible.midX - w / 2,
+                y: visible.midY - h / 2
+            )
+            panel.setFrame(CGRect(origin: origin, size: CGSize(width: w, height: h)),
+                           display: true,
+                           animate: true)
+        } else {
+            panel.setFrame(visible, display: true, animate: true)
+        }
+    }
+
     // MARK: - Panel Management
 
     private func presentPanel() {
@@ -343,8 +374,26 @@ class HUDWindowController {
         // accommodate it, the window still clamps to screen height — but
         // the 2×2 compaction means typical layouts no longer need a
         // ScrollView wrapper (which was breaking per-row symmetry).
-        let view = InfoModeView(service: infoModeService) { [weak self] in self?.close() }
-            .jarvisHUDBackground(showReticle: false)
+        // v2.0 Ultron redesign rollout — toggle via the `ultronRedesignEnabled`
+        // UserDefaults key (default ON on Delta branch). Legacy `InfoModeView`
+        // stays as the fallback. When Ultron is on, the panel hosts the
+        // full unified `UltronMainWindow` (Cockpit + Voice + Chat tabs).
+        let useUltron = UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
+        let view: AnyView = useUltron
+            ? AnyView(UltronMainWindow(
+                infoService: infoModeService,
+                audioLevel: audioLevel,
+                waveform: waveform,
+                chatSession: chatSession,
+                onChatSend: { [weak self] text in self?.onChatSend?(text) },
+                onClose:    { [weak self] in self?.close() },
+                onMinimize: { [weak self] in self?.minimizePanel() },
+                onZoom:     { [weak self] in self?.zoomPanel() }
+            ))
+            : AnyView(
+                InfoModeView(service: infoModeService) { [weak self] in self?.close() }
+                    .jarvisHUDBackground(showReticle: false)
+            )
 
         let hostingController = NSHostingController(rootView: view)
         // DO NOT set sizingOptions = .preferredContentSize. That option tells
