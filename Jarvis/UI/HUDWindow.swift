@@ -228,20 +228,30 @@ class HUDWindowController {
 
     // MARK: - Panel Management
 
+    /// Single source of truth for the Ultron-redesign flag. When true,
+    /// the legacy corner HUD is retired: voice / error transitions
+    /// either run inside the Ultron Voice tab (if the unified window
+    /// is already visible) or open the Ultron window on the Voice tab
+    /// instead of the corner popup.
+    private var isUltronUnifiedEnabled: Bool {
+        UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
+    }
+
     private func presentPanel() {
         cancelAutoClose()
         if panel != nil { return }   // already visible — @Observable state updates in place
-        // v2.0 Ultron: if the user just closed the unified panel and a
-        // voice-pipeline error races in, don't resurrect the legacy
-        // corner HUD — surface silently via `hudState.currentPhase` so
-        // the next Ultron open renders the error card instead.
-        if UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true {
-            // Only suppress corner HUD for phase transitions that would
-            // have popped the small HUD. Chat / info / uptodate have
-            // their own present*Panel() paths and are unaffected.
+
+        // v2.0 Ultron: route voice / error transitions into the Ultron
+        // unified window. If Ultron isn't up yet, open it and land on
+        // the Voice tab so the recording / error state renders there.
+        // `UltronMainWindow.restoreTab()` reads `ultron-screen`, so
+        // writing "voice" before `presentInfoPanel()` picks the tab.
+        if isUltronUnifiedEnabled {
             switch hudState.currentPhase {
             case .recording, .processing, .result, .confirmation, .error, .permissionError:
-                LoggingService.shared.log("Suppressing legacy corner HUD (Ultron mode)", level: .debug)
+                LoggingService.shared.log("Routing voice/error flow through Ultron (phase=\(hudState.currentPhase))", level: .debug)
+                UserDefaults.standard.set("voice", forKey: "ultron-screen")
+                presentInfoPanel()
                 return
             default:
                 break
@@ -291,6 +301,17 @@ class HUDWindowController {
     }
 
     private func presentCornerPanel() {
+        // v2.0 Ultron: hard block. If some caller reaches this method
+        // while the Ultron redesign flag is on, log a warning and
+        // refuse to build the corner panel. The Ultron Voice tab
+        // observes `hudState.currentPhase` and handles the state.
+        if isUltronUnifiedEnabled {
+            LoggingService.shared.log(
+                "presentCornerPanel blocked — Ultron mode. Phase: \(hudState.currentPhase)",
+                level: .warning
+            )
+            return
+        }
         let contentView = makeHUDContentView()
 
         let hostingController = NSHostingController(rootView: contentView)
