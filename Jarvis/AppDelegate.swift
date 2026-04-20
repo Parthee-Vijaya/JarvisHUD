@@ -296,7 +296,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         commandRouter = router
         hudController.commandRouter = router
-        hudController.availableModes = modeManager.allModes
         hudController.shortcutLookup = { [weak self] mode in
             guard let self else { return nil }
             return self.shortcutStringFor(mode: mode)
@@ -306,8 +305,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hudController.inputBuffer = chatInputBuffer
         hudController.permissionsManager = permissions
-        hudController.hasGeminiKey = keychainService.hasAPIKey
-        hudController.hasAnthropicKey = keychainService.getAnthropicKey() != nil
         hudController.onOpenSettings = { [weak self] in
             self?.openSettings()
         }

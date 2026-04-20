@@ -47,13 +47,10 @@ class HUDWindowController {
     var chatSession: ChatSession?
     // β.11: unified chat command-bar wiring.
     var commandRouter: ChatCommandRouter?
-    var availableModes: [Mode] = []
     var shortcutLookup: (Mode) -> String? = { _ in nil }
     var onToggleVoiceRecord: (() -> Void)?
     var inputBuffer: ChatInputBuffer?
     var permissionsManager: PermissionsManager?
-    var hasGeminiKey: Bool = false
-    var hasAnthropicKey: Bool = false
     var onOpenSettings: (() -> Void)?
     // v1.1.5 history sidebar
     var conversationHistory: [ConversationStore.Metadata] = []
