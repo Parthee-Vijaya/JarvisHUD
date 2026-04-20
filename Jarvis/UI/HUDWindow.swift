@@ -345,10 +345,11 @@ class HUDWindowController {
         // ScrollView wrapper (which was breaking per-row symmetry).
         // v2.0 Ultron redesign rollout — toggle via the `ultronRedesignEnabled`
         // UserDefaults key (default ON on Delta branch). Legacy `InfoModeView`
-        // stays as the fallback until every tile is ported to the new design.
+        // stays as the fallback. When Ultron is on, the panel hosts the
+        // full unified `UltronMainWindow` (Cockpit + Voice + Chat tabs).
         let useUltron = UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
         let view: AnyView = useUltron
-            ? AnyView(UltronCockpitView(service: infoModeService) { [weak self] in self?.close() })
+            ? AnyView(UltronMainWindow(infoService: infoModeService) { [weak self] in self?.close() })
             : AnyView(
                 InfoModeView(service: infoModeService) { [weak self] in self?.close() }
                     .jarvisHUDBackground(showReticle: false)
