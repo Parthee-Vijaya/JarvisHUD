@@ -31,6 +31,7 @@ struct UltronMainWindow: View {
     let onClose: () -> Void
     let onMinimize: () -> Void
     let onZoom: () -> Void
+    let onOpenSettings: () -> Void
 
     @State private var activeTab: UltronTab = UltronMainWindow.restoreTab()
     @State private var showHotkeySheet: Bool = false
@@ -50,7 +51,8 @@ struct UltronMainWindow: View {
                     onMinimize: onMinimize,
                     onZoom: onZoom,
                     onReload: reload,
-                    isReloading: isReloading
+                    isReloading: isReloading,
+                    onSettings: onOpenSettings
                 )
 
                 // Tab content — full-flex below the top bar

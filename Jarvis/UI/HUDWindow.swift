@@ -298,7 +298,8 @@ class HUDWindowController {
             onDeleteConversation: { [weak self] id in self?.onDeleteConversation?(id) },
             onClose:              { [weak self] in self?.close() },
             onMinimize:           { [weak self] in self?.minimizePanel() },
-            onZoom:               { [weak self] in self?.zoomPanel() }
+            onZoom:               { [weak self] in self?.zoomPanel() },
+            onOpenSettings:       { [weak self] in self?.onOpenSettings?() }
         )
 
         let hostingController = NSHostingController(rootView: view)

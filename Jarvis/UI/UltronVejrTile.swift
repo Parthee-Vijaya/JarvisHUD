@@ -66,7 +66,7 @@ struct UltronVejrTile: View {
     private func kvPairs(for w: WeatherSnapshot) -> [(label: String, value: String)] {
         var pairs: [(label: String, value: String)] = [
             ("Føles",     "\(Int(w.current.feelsLike.rounded()))°"),
-            ("Vind",      windDescription(w.current.windSpeed)),
+            ("Vind",      "\(windDescription(w.current.windSpeed)) \(w.current.windCompass)"),
             ("Fugtighed", "\(w.current.humidity) %"),
         ]
         if let today = w.daily.first {
@@ -79,8 +79,6 @@ struct UltronVejrTile: View {
     }
 
     private func windDescription(_ mps: Double) -> String {
-        // No wind-direction yet on current Weather snapshot — keep it
-        // compact until the service gains `windDirection`.
         String(format: "%.0f m/s", mps)
     }
 

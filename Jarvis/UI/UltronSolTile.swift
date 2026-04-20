@@ -39,6 +39,9 @@ struct UltronSolTile: View {
                         .foregroundStyle(UltronTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                     if let sunrise = today.sunrise, let sunset = today.sunset {
+                        SunArcView(sunrise: sunrise, sunset: sunset)
+                            .frame(height: 58)
+                            .padding(.top, 2)
                         sunTimesRow(sunrise: sunrise, sunset: sunset)
                     }
                     UltronKVGrid(pairs: kvPairs(today: today))
@@ -128,6 +131,13 @@ struct UltronSolTile: View {
 
     // MARK: - Loading placeholder
 
+    /// Noted inside the view so the preview captures current time live.
+    private var loadingPlaceholderSpacer: some View { EmptyView() }
+
+    // Sun-arc chart — a dashed semicircle from sunrise to sunset, with
+    // a small accent dot marking the sun's current position along the
+    // daylight fraction. Lives as a private type at the bottom.
+
     private var loadingPlaceholder: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
@@ -144,5 +154,89 @@ struct UltronSolTile: View {
                 .frame(maxWidth: 220)
         }
         .redacted(reason: .placeholder)
+    }
+}
+
+// MARK: - Sun arc chart
+
+/// Dashed semicircle from sunrise to sunset with the current sun
+/// position marked as an accent dot. Purely decorative — no labels,
+/// no ticks; the adjacent KV grid already surfaces the numbers.
+private struct SunArcView: View {
+    let sunrise: Date
+    let sunset: Date
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let padX: CGFloat = 8
+            let startX = padX
+            let endX = w - padX
+            let baselineY = h - 4
+            let peakY: CGFloat = 6
+
+            ZStack {
+                // The arc itself — a quadratic curve peaking above the midpoint.
+                Path { p in
+                    p.move(to: CGPoint(x: startX, y: baselineY))
+                    p.addQuadCurve(
+                        to: CGPoint(x: endX, y: baselineY),
+                        control: CGPoint(x: (startX + endX) / 2, y: peakY - 20)
+                    )
+                }
+                .stroke(
+                    UltronTheme.lineSoft,
+                    style: StrokeStyle(lineWidth: 1, dash: [3, 4])
+                )
+
+                // Faint ground line.
+                Path { p in
+                    p.move(to: CGPoint(x: startX, y: baselineY))
+                    p.addLine(to: CGPoint(x: endX, y: baselineY))
+                }
+                .stroke(UltronTheme.lineSoft.opacity(0.5), lineWidth: 1)
+
+                // Sun position dot.
+                sunDot(width: w, height: h, startX: startX, endX: endX,
+                       baselineY: baselineY, peakY: peakY)
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: progress)
+    }
+
+    /// 0…1 — fraction of daylight that has elapsed. Clamped so the
+    /// dot parks at the arc ends before sunrise / after sunset.
+    private var progress: Double {
+        let now = Date()
+        let total = sunset.timeIntervalSince(sunrise)
+        guard total > 0 else { return 0 }
+        let elapsed = now.timeIntervalSince(sunrise)
+        return max(0, min(1, elapsed / total))
+    }
+
+    @ViewBuilder
+    private func sunDot(width: CGFloat, height: CGFloat,
+                        startX: CGFloat, endX: CGFloat,
+                        baselineY: CGFloat, peakY: CGFloat) -> some View {
+        let t = progress
+        // Same quadratic as the Path above so the dot rides the arc.
+        let x = startX + (endX - startX) * t
+        let controlY = peakY - 20
+        // B(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2 for quadratic Bézier,
+        // Y component only since we already computed X linearly.
+        let u = 1 - t
+        let y = u * u * baselineY
+              + 2 * u * t * controlY
+              + t * t * baselineY
+        let isDay = t > 0 && t < 1
+        Circle()
+            .fill(isDay ? UltronTheme.accent : UltronTheme.textFaint)
+            .frame(width: 9, height: 9)
+            .overlay(
+                Circle()
+                    .stroke(UltronTheme.ink, lineWidth: 1)
+            )
+            .position(x: x, y: y)
     }
 }

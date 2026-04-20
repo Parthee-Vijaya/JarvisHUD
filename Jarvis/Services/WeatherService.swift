@@ -9,8 +9,22 @@ struct WeatherSnapshot: Codable, Equatable {
         let feelsLike: Double
         let weatherCode: Int
         let windSpeed: Double
+        /// Compass bearing in degrees (0 = N, 90 = E, 180 = S, 270 = W).
+        /// Open-Meteo returns 0–360 for `wind_direction_10m`. Used by
+        /// the Vejr tile to render "6 m/s NV" instead of bare "6 m/s".
+        let windDirection: Double
         let humidity: Int
         let time: Date
+
+        /// 8-point compass label (N / NØ / Ø / SØ / S / SV / V / NV)
+        /// derived from `windDirection`. Danish abbreviations so the
+        /// Vejr tile reads natively.
+        var windCompass: String {
+            let bearings = ["N", "NØ", "Ø", "SØ", "S", "SV", "V", "NV"]
+            let idx = Int(((windDirection.truncatingRemainder(dividingBy: 360) + 360)
+                           .truncatingRemainder(dividingBy: 360) + 22.5) / 45) & 7
+            return bearings[idx]
+        }
     }
     struct HourlyPoint: Codable, Equatable, Identifiable {
         let time: Date
@@ -67,7 +81,7 @@ final class WeatherService {
         components.queryItems = [
             URLQueryItem(name: "latitude", value: String(coordinate.latitude)),
             URLQueryItem(name: "longitude", value: String(coordinate.longitude)),
-            URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"),
+            URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m"),
             URLQueryItem(name: "hourly", value: "temperature_2m,precipitation_probability,weather_code"),
             URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset"),
             URLQueryItem(name: "forecast_days", value: "7"),
@@ -115,6 +129,7 @@ final class WeatherService {
             feelsLike: (current["apparent_temperature"] as? Double) ?? 0,
             weatherCode: (current["weather_code"] as? Int) ?? 0,
             windSpeed: (current["wind_speed_10m"] as? Double) ?? 0,
+            windDirection: (current["wind_direction_10m"] as? Double) ?? 0,
             humidity: (current["relative_humidity_2m"] as? Int) ?? 0,
             time: parseLocal(current["time"] as? String) ?? Date()
         )
