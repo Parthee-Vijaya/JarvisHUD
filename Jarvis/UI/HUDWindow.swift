@@ -384,11 +384,19 @@ class HUDWindowController {
                 infoService: infoModeService,
                 audioLevel: audioLevel,
                 waveform: waveform,
+                hudState: hudState,
+                speechService: speechService,
                 chatSession: chatSession,
-                onChatSend: { [weak self] text in self?.onChatSend?(text) },
-                onClose:    { [weak self] in self?.close() },
-                onMinimize: { [weak self] in self?.minimizePanel() },
-                onZoom:     { [weak self] in self?.zoomPanel() }
+                conversationHistory: conversationHistory,
+                currentConversationID: currentConversationID,
+                onChatSend:           { [weak self] text in self?.onChatSend?(text) },
+                onAgentApprove:       { [weak self] in self?.onAgentApprove?() },
+                onAgentReject:        { [weak self] in self?.onAgentReject?() },
+                onLoadConversation:   { [weak self] id in self?.onLoadConversation?(id) },
+                onDeleteConversation: { [weak self] id in self?.onDeleteConversation?(id) },
+                onClose:              { [weak self] in self?.close() },
+                onMinimize:           { [weak self] in self?.minimizePanel() },
+                onZoom:               { [weak self] in self?.zoomPanel() }
             ))
             : AnyView(
                 InfoModeView(service: infoModeService) { [weak self] in self?.close() }
