@@ -343,8 +343,16 @@ class HUDWindowController {
         // accommodate it, the window still clamps to screen height — but
         // the 2×2 compaction means typical layouts no longer need a
         // ScrollView wrapper (which was breaking per-row symmetry).
-        let view = InfoModeView(service: infoModeService) { [weak self] in self?.close() }
-            .jarvisHUDBackground(showReticle: false)
+        // v2.0 Ultron redesign rollout — toggle via the `ultronRedesignEnabled`
+        // UserDefaults key (default ON on Delta branch). Legacy `InfoModeView`
+        // stays as the fallback until every tile is ported to the new design.
+        let useUltron = UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
+        let view: AnyView = useUltron
+            ? AnyView(UltronCockpitView(service: infoModeService) { [weak self] in self?.close() })
+            : AnyView(
+                InfoModeView(service: infoModeService) { [weak self] in self?.close() }
+                    .jarvisHUDBackground(showReticle: false)
+            )
 
         let hostingController = NSHostingController(rootView: view)
         // DO NOT set sizingOptions = .preferredContentSize. That option tells
