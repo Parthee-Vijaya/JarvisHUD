@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// NSPanel subclass that accepts key / main status so SwiftUI
+/// `TextField` inputs receive keystrokes. Without this override the
+/// default `NSPanel` behaviour (floating, non-activating) blocks
+/// keyboard focus and the chat composer goes dead.
+final class JarvisKeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 @MainActor
 class HUDWindowController {
     private var panel: NSPanel?
@@ -137,23 +146,8 @@ class HUDWindowController {
     func showChat() {
         cancelRecordingTimer()
         hudState.currentPhase = .chat
-        // v2.0 Ultron: route chat hotkey (⌥ Return / ⌥ ⇧ A) into the
-        // unified window's Chat tab instead of the legacy Spotlight-
-        // style panel. If Ultron is already up we just flip the tab
-        // via the UserDefault key — `UltronMainWindow` observes it on
-        // next mount — and the existing panel stays put.
-        if isUltronUnifiedEnabled {
-            requestUltronTab("chat")
-            if panel == nil {
-                presentInfoPanel()
-            }
-            return
-        }
-        if panel == nil {
-            presentChatPanel()
-        } else {
-            resizePanelForChat()
-        }
+        requestUltronTab("chat")
+        if panel == nil { presentInfoPanel() }
     }
 
     var isChatVisible: Bool {
@@ -175,22 +169,8 @@ class HUDWindowController {
         cancelRecordingTimer()
         cancelAutoClose()
         hudState.currentPhase = .uptodate
-        // v2.0 Ultron: no dedicated Briefing tab yet — route to the
-        // Cockpit tab so the "jarvis://briefing" URL scheme + ⌥ ⇧ B
-        // hotkey open the unified window on Cockpit. Legacy UptodateView
-        // is only used when Ultron mode is disabled.
-        if isUltronUnifiedEnabled {
-            requestUltronTab("cockpit")
-            if panel == nil {
-                presentInfoPanel()
-            }
-            return
-        }
-        if panel == nil {
-            presentUptodatePanel()
-        } else {
-            resizePanelForUptodate()
-        }
+        requestUltronTab("cockpit")
+        if panel == nil { presentInfoPanel() }
     }
 
     var isUptodateVisible: Bool {
@@ -253,24 +233,15 @@ class HUDWindowController {
 
     // MARK: - Panel Management
 
-    /// Single source of truth for the Ultron-redesign flag. When true,
-    /// the legacy corner HUD is retired: voice / error transitions
-    /// either run inside the Ultron Voice tab (if the unified window
-    /// is already visible) or open the Ultron window on the Voice tab
-    /// instead of the corner popup.
-    private var isUltronUnifiedEnabled: Bool {
-        UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
-    }
-
-    /// Broadcast when a legacy `showChat`/`showUptodate`/`showInfoMode`
-    /// call should flip the Ultron tab *live* (the unified window is
-    /// already mounted — persisting to UserDefaults alone isn't enough
-    /// because `restoreTab()` only runs at init).
+    /// Broadcast when a `showChat`/`showUptodate`/`showInfoMode` call should
+    /// flip the Ultron tab *live*. The unified window is already mounted,
+    /// so persisting `ultron-screen` to UserDefaults alone isn't enough
+    /// (`UltronMainWindow.restoreTab()` only runs at init).
     static let ultronSwitchTabNotification = Notification.Name("ultron.switchTab")
 
     /// Persist the Ultron tab to UserDefaults AND post a live-switch
     /// notification so an already-mounted `UltronMainWindow` updates
-    /// immediately. Use this instead of writing the UserDefault directly.
+    /// immediately.
     private func requestUltronTab(_ tab: String) {
         UserDefaults.standard.set(tab, forKey: "ultron-screen")
         NotificationCenter.default.post(
@@ -280,255 +251,55 @@ class HUDWindowController {
         )
     }
 
+    /// Opens Ultron if no panel is up yet. Voice / recording / error
+    /// phases land on the Voice tab; chat on Chat; everything else on
+    /// Cockpit. The Ultron Voice / Chat tabs observe `hudState` so any
+    /// phase change while the panel is already up just updates state.
     private func presentPanel() {
         cancelAutoClose()
-        if panel != nil { return }   // already visible — @Observable state updates in place
-
-        // v2.0 Ultron: route voice / error transitions into the Ultron
-        // unified window. If Ultron isn't up yet, open it and land on
-        // the Voice tab so the recording / error state renders there.
-        // `UltronMainWindow.restoreTab()` reads `ultron-screen`, so
-        // writing "voice" before `presentInfoPanel()` picks the tab.
-        if isUltronUnifiedEnabled {
-            switch hudState.currentPhase {
-            case .recording, .processing, .result, .confirmation, .error, .permissionError:
-                LoggingService.shared.log("Routing voice/error flow through Ultron (phase=\(hudState.currentPhase))", level: .debug)
-                requestUltronTab("voice")
-                presentInfoPanel()
-                return
-            default:
-                break
-            }
-        }
-        presentCornerPanel()
-    }
-
-    /// Builds the single HUDContentView used by both the corner HUD panel
-    /// (recording / result / error) and the Spotlight-style chat panel.
-    /// Centralised so β.11's new command-bar plumbing only needs one wiring site.
-    private func makeHUDContentView() -> HUDContentView {
-        HUDContentView(
-            state: hudState,
-            audioLevel: audioLevel,
-            waveform: waveform,
-            speechService: speechService,
-            activeModeName: activeModeName,
-            onClose: { [weak self] in self?.close() },
-            onSpeak: { [weak self] text in self?.onSpeakRequested?(text) },
-            onPermissionAction: { [weak self] in self?.onPermissionAction?() },
-            chatSession: chatSession,
-            onChatSend: { [weak self] text in self?.onChatSend?(text) },
-            onPin: { [weak self] in self?.onPinToggle?() },
-            onAgentChatSend: onAgentChatSend != nil ? { [weak self] text in self?.onAgentChatSend?(text) } : nil,
-            onAgentApprove: onAgentApprove != nil ? { [weak self] in self?.onAgentApprove?() } : nil,
-            onAgentReject: onAgentReject != nil ? { [weak self] in self?.onAgentReject?() } : nil,
-            commandRouter: commandRouter,
-            availableModes: availableModes,
-            shortcutLookup: shortcutLookup,
-            onToggleVoiceRecord: onToggleVoiceRecord != nil ? { [weak self] in self?.onToggleVoiceRecord?() } : nil,
-            inputBuffer: inputBuffer,
-            permissionsManager: permissionsManager,
-            hasGeminiKey: hasGeminiKey,
-            hasAnthropicKey: hasAnthropicKey,
-            onOpenSettings: onOpenSettings != nil ? { [weak self] in self?.onOpenSettings?() } : nil,
-            conversationHistory: conversationHistory,
-            currentConversationID: currentConversationID,
-            onLoadConversation: onLoadConversation != nil ? { [weak self] id in self?.onLoadConversation?(id) } : nil,
-            onDeleteConversation: onDeleteConversation != nil ? { [weak self] id in self?.onDeleteConversation?(id) } : nil,
-            onHoverChanged: { [weak self] hovering in self?.onHoverChanged(hovering) },
-            onErrorRetry: onErrorRetryRequested.map { handler in { [weak self] in
-                handler()
-                self?.close()
-            } }
-        )
-    }
-
-    private func presentCornerPanel() {
-        // v2.0 Ultron: hard block. If some caller reaches this method
-        // while the Ultron redesign flag is on, log a warning and
-        // refuse to build the corner panel. The Ultron Voice tab
-        // observes `hudState.currentPhase` and handles the state.
-        if isUltronUnifiedEnabled {
-            LoggingService.shared.log(
-                "presentCornerPanel blocked — Ultron mode. Phase: \(hudState.currentPhase)",
-                level: .warning
-            )
-            return
-        }
-        let contentView = makeHUDContentView()
-
-        let hostingController = NSHostingController(rootView: contentView)
-
-        let panel = NSPanel(contentViewController: hostingController)
-        panel.styleMask = [.borderless, .nonactivatingPanel]
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.isMovableByWindowBackground = true
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        if let screen = NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            let x = screenFrame.maxX - Constants.HUD.width - Constants.HUD.padding
-            let y = screenFrame.maxY - Constants.HUD.maxHeight - Constants.HUD.padding
-            panel.setFrame(
-                NSRect(x: x, y: y, width: Constants.HUD.width, height: Constants.HUD.maxHeight),
-                display: true
-            )
-        }
-
-        panel.orderFrontRegardless()
-        self.panel = panel
-        hudState.isVisible = true
-    }
-
-    // MARK: - Chat Panel
-
-    private func presentChatPanel() {
-        if isUltronUnifiedEnabled {
-            LoggingService.shared.log(
-                "presentChatPanel blocked — Ultron mode. Routing to presentInfoPanel.",
-                level: .warning
-            )
+        if panel != nil { return }
+        switch hudState.currentPhase {
+        case .recording, .processing, .result, .confirmation,
+             .error, .permissionError:
+            requestUltronTab("voice")
+        case .chat:
             requestUltronTab("chat")
-            presentInfoPanel()
-            return
-        }
-        cancelAutoClose()
-
-        if panel != nil {
-            resizePanelForChat()
-            return
-        }
-
-        let contentView = makeHUDContentView()
-
-        let hostingController = NSHostingController(rootView: contentView)
-
-        // Custom subclass: canBecomeKey=true so the TextField can actually receive
-        // keystrokes (fixes the v4.x "can't type in chat" bug).
-        let panel = JarvisChatPanel(contentViewController: hostingController)
-        panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false  // SwiftUI handles the cyan glow shadow
-        panel.isMovableByWindowBackground = true
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.minSize = NSSize(width: Constants.ChatHUD.minWidth, height: Constants.ChatHUD.minHeight)
-
-        // β.11: always open centered, Spotlight-style. Frame persistence
-        // dropped — the user can still drag within a session, but re-opening
-        // snaps back to centre for predictable behaviour.
-        let w = Constants.ChatHUD.width
-        let h = Constants.ChatHUD.height
-        if let screen = NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            let x = screenFrame.midX - w / 2
-            let y = screenFrame.midY - h / 2
-            panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
-        }
-
-        panel.orderFrontRegardless()
-        // Make the panel key so the text field can receive keyboard input
-        panel.makeKey()
-        self.panel = panel
-        hudState.isVisible = true
-    }
-
-    // MARK: - Uptodate Panel
-
-    private func presentUptodatePanel() {
-        if isUltronUnifiedEnabled {
-            LoggingService.shared.log(
-                "presentUptodatePanel blocked — Ultron mode. Routing to presentInfoPanel.",
-                level: .warning
-            )
+        case .uptodate, .infoMode:
             requestUltronTab("cockpit")
-            presentInfoPanel()
-            return
+        @unknown default:
+            requestUltronTab("cockpit")
         }
-        guard let updatesService else {
-            LoggingService.shared.log("Uptodate panel requested but service not wired", level: .warning)
-            return
-        }
-        cancelAutoClose()
-
-        let view = UptodateView(service: updatesService) { [weak self] in self?.close() }
-            .jarvisHUDBackground(showReticle: false)
-
-        let hostingController = NSHostingController(rootView: view)
-        hostingController.sizingOptions = .preferredContentSize
-
-        let panel = JarvisKeyablePanel(contentViewController: hostingController)
-        panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.isMovableByWindowBackground = true
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.minSize = NSSize(width: 600, height: 200)
-
-        // Intrinsic-size-driven: let the hosting controller pick the height,
-        // then pin the panel to the top-right of the visible screen.
-        anchorPanelTopRight(panel)
-
-        panel.orderFrontRegardless()
-        panel.makeKey()
-        self.panel = panel
-        hudState.isVisible = true
+        presentInfoPanel()
     }
 
-    // MARK: - Info Panel
+    // MARK: - Ultron unified panel
 
     private func presentInfoPanel() {
         guard let infoModeService else {
-            LoggingService.shared.log("Info panel requested but service not wired", level: .warning)
+            LoggingService.shared.log("Ultron panel requested but service not wired", level: .warning)
             return
         }
         cancelAutoClose()
 
-        // v1.4 polish: the panel measures via fittingSize and sizes the
-        // window to match. The Cockpit now arranges tiles as two 3-cols
-        // up top + a 2×2 grid of wide tiles below, so everything fits on
-        // a laptop screen without scrolling. If a very-short display can't
-        // accommodate it, the window still clamps to screen height — but
-        // the 2×2 compaction means typical layouts no longer need a
-        // ScrollView wrapper (which was breaking per-row symmetry).
-        // v2.0 Ultron redesign rollout — toggle via the `ultronRedesignEnabled`
-        // UserDefaults key (default ON on Delta branch). Legacy `InfoModeView`
-        // stays as the fallback. When Ultron is on, the panel hosts the
-        // full unified `UltronMainWindow` (Cockpit + Voice + Chat tabs).
-        let useUltron = UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
-        let view: AnyView = useUltron
-            ? AnyView(UltronMainWindow(
-                infoService: infoModeService,
-                audioLevel: audioLevel,
-                waveform: waveform,
-                hudState: hudState,
-                speechService: speechService,
-                usageTracker: usageTracker ?? UsageTracker(),
-                chatSession: chatSession,
-                conversationHistory: conversationHistory,
-                currentConversationID: currentConversationID,
-                onChatSend:           { [weak self] text in self?.onChatSend?(text) },
-                onAgentApprove:       { [weak self] in self?.onAgentApprove?() },
-                onAgentReject:        { [weak self] in self?.onAgentReject?() },
-                onLoadConversation:   { [weak self] id in self?.onLoadConversation?(id) },
-                onDeleteConversation: { [weak self] id in self?.onDeleteConversation?(id) },
-                onClose:              { [weak self] in self?.close() },
-                onMinimize:           { [weak self] in self?.minimizePanel() },
-                onZoom:               { [weak self] in self?.zoomPanel() }
-            ))
-            : AnyView(
-                InfoModeView(service: infoModeService) { [weak self] in self?.close() }
-                    .jarvisHUDBackground(showReticle: false)
-            )
+        let view = UltronMainWindow(
+            infoService: infoModeService,
+            audioLevel: audioLevel,
+            waveform: waveform,
+            hudState: hudState,
+            speechService: speechService,
+            usageTracker: usageTracker ?? UsageTracker(),
+            chatSession: chatSession,
+            conversationHistory: conversationHistory,
+            currentConversationID: currentConversationID,
+            onChatSend:           { [weak self] text in self?.onChatSend?(text) },
+            onAgentApprove:       { [weak self] in self?.onAgentApprove?() },
+            onAgentReject:        { [weak self] in self?.onAgentReject?() },
+            onLoadConversation:   { [weak self] id in self?.onLoadConversation?(id) },
+            onDeleteConversation: { [weak self] id in self?.onDeleteConversation?(id) },
+            onClose:              { [weak self] in self?.close() },
+            onMinimize:           { [weak self] in self?.minimizePanel() },
+            onZoom:               { [weak self] in self?.zoomPanel() }
+        )
 
         let hostingController = NSHostingController(rootView: view)
         // DO NOT set sizingOptions = .preferredContentSize. That option tells
@@ -572,53 +343,10 @@ class HUDWindowController {
         hudState.isVisible = true
     }
 
-    /// After the hosting controller has sized the panel to its SwiftUI content,
-    /// move it to the top-right of the visible screen. Clamps to screen height
-    /// if the content is pathologically tall.
-    private func anchorPanelTopRight(_ panel: NSPanel) {
-        DispatchQueue.main.async { [weak self, weak panel] in
-            guard let panel, let screen = NSScreen.main else { return }
-            let screenFrame = screen.visibleFrame
-            var frame = panel.frame
-            let maxHeight = screenFrame.height - 40
-            if frame.height > maxHeight { frame.size.height = maxHeight }
-            frame.origin.x = screenFrame.maxX - frame.width - Constants.HUD.padding
-            frame.origin.y = screenFrame.maxY - frame.height - Constants.HUD.padding
-            panel.setFrame(frame, display: true)
-            _ = self  // silence unused warning
-        }
-    }
-
-    private func resizePanelForUptodate() {
-        guard let panel, let updatesService else { return }
-        let view = UptodateView(service: updatesService) { [weak self] in self?.close() }
-            .jarvisHUDBackground(showReticle: false)
-        let host = NSHostingController(rootView: view)
-        host.sizingOptions = .preferredContentSize
-        panel.contentViewController = host
-        anchorPanelTopRight(panel)
-    }
-
-    private func resizePanelForChat() {
-        guard let panel else { return }
-        let w = Constants.ChatHUD.width
-        let h = Constants.ChatHUD.height
-        // Stay borderless — ChatView's own header owns close/pin, so we don't want
-        // a ghost system titlebar reserving space above our cyan background.
-        panel.styleMask = [.borderless, .resizable, .nonactivatingPanel]
-        panel.minSize = NSSize(width: Constants.ChatHUD.minWidth, height: Constants.ChatHUD.minHeight)
-        // β.11: always recenter on chat-mode transition too.
-        if let screen = NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            let x = screenFrame.midX - w / 2
-            let y = screenFrame.midY - h / 2
-            panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true, animate: true)
-        }
-        panel.makeKey()
-    }
-
-    /// No-op retained for call-site compatibility — chat panel no longer
-    /// persists its frame. Safe to delete once all callers are updated.
+    /// No-op retained for call-site compatibility. The Ultron unified
+    /// window doesn't persist chat-panel frame separately; kept here so
+    /// `AppDelegate` callers still compile. Delete when those call
+    /// sites are cleaned up.
     func saveChatFrame() {}
 
     // MARK: - Hover-pause (v1.3)

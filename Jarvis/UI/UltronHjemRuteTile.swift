@@ -12,6 +12,10 @@ struct UltronHjemRuteTile: View {
     let commute: CommuteEstimate?
     let chargers: [ChargerLocation]
     let destinationWeather: WeatherSnapshot?
+    /// When nil the service has not yet resolved its first fetch; the
+    /// tile's loading placeholder uses an explicit "venter på lokation"
+    /// caption instead of the generic redacted rectangles.
+    var lastRefresh: Date? = nil
 
     var body: some View {
         UltronTile(
@@ -133,21 +137,28 @@ struct UltronHjemRuteTile: View {
     // MARK: - Loading placeholder
 
     private var loadingPlaceholder: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                RoundedRectangle(cornerRadius: 10).fill(UltronTheme.ink3)
-                    .frame(width: 160, height: 56)
-                RoundedRectangle(cornerRadius: 4).fill(UltronTheme.ink3)
-                    .frame(height: 14).frame(maxWidth: 140)
-                ForEach(0..<4) { _ in
+        VStack(alignment: .leading, spacing: 12) {
+            Text(lastRefresh == nil
+                 ? "Venter på lokation…"
+                 : "Ingen rute sat op — tilføj hjemmeadresse i Settings.")
+                .font(UltronTheme.Typography.caption(size: 14))
+                .foregroundStyle(UltronTheme.textDim)
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 10) {
+                    RoundedRectangle(cornerRadius: 10).fill(UltronTheme.ink3)
+                        .frame(width: 160, height: 56)
                     RoundedRectangle(cornerRadius: 4).fill(UltronTheme.ink3)
-                        .frame(height: 12)
+                        .frame(height: 14).frame(maxWidth: 140)
+                    ForEach(0..<3) { _ in
+                        RoundedRectangle(cornerRadius: 4).fill(UltronTheme.ink3)
+                            .frame(height: 12)
+                    }
                 }
+                .frame(width: 200, alignment: .leading)
+                RoundedRectangle(cornerRadius: 10).fill(UltronTheme.ink3)
+                    .frame(minHeight: 160, maxHeight: .infinity)
             }
-            .frame(width: 200, alignment: .leading)
-            RoundedRectangle(cornerRadius: 10).fill(UltronTheme.ink3)
-                .frame(height: 220)
+            .redacted(reason: .placeholder)
         }
-        .redacted(reason: .placeholder)
     }
 }

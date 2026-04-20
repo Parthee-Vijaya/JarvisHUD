@@ -188,13 +188,15 @@ struct UltronCockpitView: View {
                     UltronHjemRuteTile(
                         commute: service.commute,
                         chargers: service.chargers,
-                        destinationWeather: service.destinationWeather
+                        destinationWeather: service.destinationWeather,
+                        lastRefresh: service.lastRefresh
                     )
                     .gridCellFilling()
                     UltronTrafikInfoTile(
                         events: service.trafficEvents,
                         totalCount: service.trafficEventsTotalCount,
-                        countByCategory: service.trafficEventsCountByCategory
+                        countByCategory: service.trafficEventsCountByCategory,
+                        lastRefresh: service.lastRefresh
                     )
                     .gridCellFilling()
                 }
@@ -209,8 +211,11 @@ struct UltronCockpitView: View {
                  horizontalSpacing: UltronTheme.Spacing.gridGap,
                  verticalSpacing: UltronTheme.Spacing.gridGap) {
                 GridRow {
-                    UltronFlyTile(aircraft: service.aircraftNearby)
-                        .gridCellFilling()
+                    UltronFlyTile(
+                        aircraft: service.aircraftNearby,
+                        lastRefresh: service.lastRefresh
+                    )
+                    .gridCellFilling()
                     UltronNyhederTile(newsBySource: service.newsBySource)
                         .gridCellFilling()
                 }

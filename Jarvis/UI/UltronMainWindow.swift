@@ -44,7 +44,7 @@ struct UltronMainWindow: View {
                 UltronTopBar(
                     activeTab: $activeTab,
                     liveLabel: liveLabel,
-                    livePulsing: activeTab == .voice,
+                    livePulsing: livePulsing,
                     onHotkeySheet: { showHotkeySheet.toggle() },
                     onClose: onClose,
                     onMinimize: onMinimize,
@@ -146,11 +146,43 @@ struct UltronMainWindow: View {
 
     // MARK: - Live label (top-bar)
 
+    /// Live status pill — pulls from the real sources:
+    /// - Cockpit → "opdateret 12s" from `infoService.lastRefresh`
+    /// - Voice → "Lytter · 3.2s" (recording elapsed) / "Tænker" /
+    ///   "Taler" / "Klar · ⌥ Space" driven by `hudState.currentPhase`
+    /// - Chat → "Skriver · 420ms" when `usageTracker.isTurnInFlight`,
+    ///   else "Model · gemini-2.5-flash" / "Klar"
     private var liveLabel: String {
         switch activeTab {
-        case .cockpit: return "Cockpit · opdateret " + relativeRefresh()
-        case .voice:   return "Klar · ⌥ Space"
-        case .chat:    return "Agent · Sonnet 4.5"
+        case .cockpit:
+            if case .loading = infoService.state { return "Cockpit · opdaterer…" }
+            return "Cockpit · opdateret " + relativeRefresh()
+        case .voice:
+            switch hudState.currentPhase {
+            case .recording:     return "Lytter · ⌥ Space"
+            case .processing:    return "Tænker · ◌"
+            case .result:        return "Taler"
+            case .error:         return "Fejl"
+            case .permissionError: return "Mangler adgang"
+            default:             return "Klar · ⌥ Space"
+            }
+        case .chat:
+            if usageTracker.isTurnInFlight { return "Skriver…" }
+            if let model = usageTracker.lastModelName {
+                return "Model · \(model)"
+            }
+            return "Klar · ⌘ ⏎"
+        }
+    }
+
+    private var livePulsing: Bool {
+        switch activeTab {
+        case .cockpit: return false
+        case .voice:
+            if case .recording = hudState.currentPhase { return true }
+            if case .processing = hudState.currentPhase { return true }
+            return false
+        case .chat: return usageTracker.isTurnInFlight
         }
     }
 
