@@ -21,6 +21,7 @@ struct UltronTopBar: View {
     var onZoom: () -> Void = {}
     var onReload: () -> Void = {}
     var isReloading: Bool = false
+    var onSettings: () -> Void = {}
 
     @State private var now = Date()
     @State private var trafficHovering = false
@@ -35,6 +36,7 @@ struct UltronTopBar: View {
             livePill
             timeText
             reloadButton
+            settingsButton
             hotkeyHint
         }
         .padding(.horizontal, 22)
@@ -183,6 +185,28 @@ struct UltronTopBar: View {
         .buttonStyle(.plain)
         .help("Genindlæs data")
         .accessibilityLabel("Genindlæs")
+    }
+
+    private var settingsButton: some View {
+        Button(action: onSettings) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(UltronTheme.textMute)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(UltronTheme.ink2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .stroke(UltronTheme.lineSoft, lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Indstillinger")
+        .accessibilityLabel("Indstillinger")
+        .keyboardShortcut(",", modifiers: .command)
     }
 
     private var hotkeyHint: some View {

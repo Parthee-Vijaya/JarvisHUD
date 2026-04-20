@@ -13,6 +13,8 @@ import SwiftUI
 /// - Meta: accent live-dot + "ADS-B · direkte"
 struct UltronFlyTile: View {
     let aircraft: [Aircraft]
+    /// When nil the service has not yet resolved its first fetch.
+    var lastRefresh: Date? = nil
 
     private var visible: [Aircraft] {
         Array(aircraft.prefix(3))
@@ -118,7 +120,9 @@ struct UltronFlyTile: View {
     // MARK: - Empty
 
     private var emptyState: some View {
-        Text("Ingen fly i nærheden lige nu.")
+        Text(lastRefresh == nil
+             ? "Venter på lokation…"
+             : "Ingen fly i nærheden lige nu.")
             .font(UltronTheme.Typography.caption(size: 14))
             .foregroundStyle(UltronTheme.textDim)
             .frame(maxWidth: .infinity, alignment: .leading)

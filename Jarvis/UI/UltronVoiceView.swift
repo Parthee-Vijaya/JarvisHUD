@@ -60,6 +60,12 @@ struct UltronVoiceView: View {
     var inputTokens: Int = 0
     var outputTokens: Int = 0
     var latencyMs: Int = 0
+    /// Tapped when the user wants to take the current transcript and
+    /// continue the conversation in the Chat tab. Empty = disabled.
+    var onSendToChat: (String) -> Void = { _ in }
+    /// Current captured transcript. When non-empty the "Send til chat"
+    /// handoff button becomes active.
+    var liveTranscript: String = ""
 
     // MARK: Animation state
 
@@ -277,11 +283,28 @@ struct UltronVoiceView: View {
     // MARK: - Footer + meta
 
     private var footer: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(hintText)
                 .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
                 .foregroundStyle(UltronTheme.textMute)
             Spacer(minLength: 12)
+            if !liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    onSendToChat(liveTranscript)
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Send til chat")
+                        Image(systemName: "arrow.turn.up.right")
+                    }
+                    .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
+                    .foregroundStyle(UltronTheme.ink)
+                    .padding(.horizontal, 9).padding(.vertical, 3)
+                    .background(Capsule().fill(UltronTheme.paper))
+                }
+                .buttonStyle(.plain)
+                .help("Fortsæt i chat med den aktuelle transcript")
+                .accessibilityLabel("Send til chat")
+            }
             Text(formatDuration(duration))
                 .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
                 .monospacedDigit()

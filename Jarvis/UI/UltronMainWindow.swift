@@ -31,6 +31,7 @@ struct UltronMainWindow: View {
     let onClose: () -> Void
     let onMinimize: () -> Void
     let onZoom: () -> Void
+    let onOpenSettings: () -> Void
 
     @State private var activeTab: UltronTab = UltronMainWindow.restoreTab()
     @State private var showHotkeySheet: Bool = false
@@ -44,13 +45,14 @@ struct UltronMainWindow: View {
                 UltronTopBar(
                     activeTab: $activeTab,
                     liveLabel: liveLabel,
-                    livePulsing: activeTab == .voice,
+                    livePulsing: livePulsing,
                     onHotkeySheet: { showHotkeySheet.toggle() },
                     onClose: onClose,
                     onMinimize: onMinimize,
                     onZoom: onZoom,
                     onReload: reload,
-                    isReloading: isReloading
+                    isReloading: isReloading,
+                    onSettings: onOpenSettings
                 )
 
                 // Tab content — full-flex below the top bar
@@ -64,7 +66,8 @@ struct UltronMainWindow: View {
                             waveform: waveform,
                             hudState: hudState,
                             speechService: speechService,
-                            usageTracker: usageTracker
+                            usageTracker: usageTracker,
+                            onSendToChat: handoffVoiceToChat
                         )
                     case .chat:
                         UltronChatHost(
@@ -96,6 +99,30 @@ struct UltronMainWindow: View {
         .onChange(of: activeTab) { _, new in
             UserDefaults.standard.set(new.rawValue, forKey: UltronMainWindow.screenKey)
         }
+        // Live tab switching — `HUDWindowController.showChat` /
+        // `showUptodate` posts this notification so an already-mounted
+        // window flips tab without waiting on the next `restoreTab()`.
+        .onReceive(NotificationCenter.default.publisher(
+            for: HUDWindowController.ultronSwitchTabNotification
+        )) { note in
+            if let raw = note.userInfo?["tab"] as? String,
+               let tab = UltronTab(rawValue: raw) {
+                activeTab = tab
+            }
+        }
+    }
+
+    // MARK: - Voice → Chat handoff
+
+    /// Push the given transcript into the active Chat session as a
+    /// user message, fire the chat router, then switch to the Chat
+    /// tab. Called from the "Send til chat" button on the Voice HUD.
+    private func handoffVoiceToChat(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onChatSend(trimmed)
+        activeTab = .chat
+        speechService.reset()
     }
 
     // MARK: - Reload
@@ -135,11 +162,43 @@ struct UltronMainWindow: View {
 
     // MARK: - Live label (top-bar)
 
+    /// Live status pill — pulls from the real sources:
+    /// - Cockpit → "opdateret 12s" from `infoService.lastRefresh`
+    /// - Voice → "Lytter · 3.2s" (recording elapsed) / "Tænker" /
+    ///   "Taler" / "Klar · ⌥ Space" driven by `hudState.currentPhase`
+    /// - Chat → "Skriver · 420ms" when `usageTracker.isTurnInFlight`,
+    ///   else "Model · gemini-2.5-flash" / "Klar"
     private var liveLabel: String {
         switch activeTab {
-        case .cockpit: return "Cockpit · opdateret " + relativeRefresh()
-        case .voice:   return "Klar · ⌥ Space"
-        case .chat:    return "Agent · Sonnet 4.5"
+        case .cockpit:
+            if case .loading = infoService.state { return "Cockpit · opdaterer…" }
+            return "Cockpit · opdateret " + relativeRefresh()
+        case .voice:
+            switch hudState.currentPhase {
+            case .recording:     return "Lytter · ⌥ Space"
+            case .processing:    return "Tænker · ◌"
+            case .result:        return "Taler"
+            case .error:         return "Fejl"
+            case .permissionError: return "Mangler adgang"
+            default:             return "Klar · ⌥ Space"
+            }
+        case .chat:
+            if usageTracker.isTurnInFlight { return "Skriver…" }
+            if let model = usageTracker.lastModelName {
+                return "Model · \(model)"
+            }
+            return "Klar · ⌘ ⏎"
+        }
+    }
+
+    private var livePulsing: Bool {
+        switch activeTab {
+        case .cockpit: return false
+        case .voice:
+            if case .recording = hudState.currentPhase { return true }
+            if case .processing = hudState.currentPhase { return true }
+            return false
+        case .chat: return usageTracker.isTurnInFlight
         }
     }
 
@@ -187,6 +246,7 @@ private struct UltronVoiceHost: View {
     @Bindable var hudState: HUDState
     @Bindable var speechService: SpeechRecognitionService
     @Bindable var usageTracker: UsageTracker
+    let onSendToChat: (String) -> Void
 
     @State private var inputName: String = AudioDeviceInfo.currentInputName() ?? "—"
     @State private var outputName: String = AudioDeviceInfo.currentOutputName() ?? "—"
@@ -208,7 +268,9 @@ private struct UltronVoiceHost: View {
                 modelName: usageTracker.lastModelName ?? "—",
                 inputTokens: usageTracker.lastInputTokens,
                 outputTokens: usageTracker.lastOutputTokens,
-                latencyMs: usageTracker.lastLatencyMs
+                latencyMs: usageTracker.lastLatencyMs,
+                onSendToChat: onSendToChat,
+                liveTranscript: speechService.transcript
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -12,6 +12,10 @@ struct UltronTrafikInfoTile: View {
     let events: [TrafficEvent]
     let totalCount: Int
     let countByCategory: [(TrafficEvent.Category, Int)]
+    /// When nil the service has not yet resolved its first fetch; the
+    /// tile renders a "venter på lokation" state instead of the normal
+    /// "ingen hændelser" so cold starts don't look broken.
+    var lastRefresh: Date? = nil
 
     private var visibleEvents: [TrafficEvent] {
         Array(events.prefix(5))
@@ -125,7 +129,9 @@ struct UltronTrafikInfoTile: View {
     // MARK: - Empty
 
     private var emptyState: some View {
-        Text("Ingen aktive hændelser i nærheden.")
+        Text(lastRefresh == nil
+             ? "Venter på lokation…"
+             : "Ingen aktive hændelser i nærheden.")
             .font(UltronTheme.Typography.caption(size: 14))
             .foregroundStyle(UltronTheme.textDim)
             .frame(maxWidth: .infinity, alignment: .leading)
