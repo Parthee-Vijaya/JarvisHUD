@@ -34,10 +34,21 @@ final class WidgetStateWriter {
     /// — a missing container (app group not configured yet) is logged but
     /// never thrown.
     func write(_ snapshot: WidgetSnapshot) {
-        guard let url = containerURL()?.appendingPathComponent(filename) else {
+        guard let container = containerURL() else {
             // Before the App Group entitlement lands this just no-ops.
             return
         }
+        // macOS creates the container *path* as soon as the entitlement is
+        // granted but doesn't materialise the directory until something
+        // writes to it. First write() call on a fresh install lands before
+        // the system has created the folder, so `Data.write` hits ENOENT.
+        // Create the directory ourselves so the first snapshot lands.
+        if !FileManager.default.fileExists(atPath: container.path) {
+            try? FileManager.default.createDirectory(
+                at: container, withIntermediateDirectories: true
+            )
+        }
+        let url = container.appendingPathComponent(filename)
         do {
             let data = try encoder.encode(snapshot)
             try data.write(to: url, options: .atomic)
@@ -49,11 +60,11 @@ final class WidgetStateWriter {
 
         #if canImport(WidgetKit)
         // Each widget kind reloads separately so a weather-only update doesn't
-        // force the briefing widget to re-render. Kinds here must match the
-        // `kind:` string each Widget struct declares once the extension exists.
-        WidgetCenter.shared.reloadTimelines(ofKind: "CockpitWidget")
-        WidgetCenter.shared.reloadTimelines(ofKind: "CommuteWidget")
-        WidgetCenter.shared.reloadTimelines(ofKind: "BriefingWidget")
+        // force the whole bundle to re-render. Kinds here MUST match the
+        // `kind:` string each Widget struct declares in the extension target.
+        WidgetCenter.shared.reloadTimelines(ofKind: "dk.pavi.jarvis.cockpit-mini")
+        WidgetCenter.shared.reloadTimelines(ofKind: "dk.pavi.jarvis.commute")
+        WidgetCenter.shared.reloadTimelines(ofKind: "dk.pavi.jarvis.claude-usage")
         #endif
     }
 
