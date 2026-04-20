@@ -93,6 +93,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Jarvis DMG is published. Non-blocking; prompts only when a
             // higher semver is found.
             updateChecker.checkIfDue()
+            // v2.0: pre-warm the Cockpit data sources in the background so
+            // the first time the user opens Ultron the tiles already have
+            // live commute + weather + charger data. The refresh runs off
+            // the main actor via the service's internal Task; this call
+            // just kicks it off. Subsequent opens hit the 2-minute cache.
+            Task { await infoModeService.refresh() }
             LoggingService.shared.log("Jarvis v\(Constants.appVersion) started")
         }
     }
