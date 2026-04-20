@@ -53,6 +53,13 @@ struct UltronVoiceView: View {
     var outputSpeaker: String = "MacBook Air"
     var noiseDB: Int = -42
     var confidencePct: Int = 96
+    /// Live per-turn stats — `modelName`, token counts and latency in
+    /// ms are pulled from `UsageTracker` after the most recent model
+    /// round-trip. Zero / "—" when no turn has completed.
+    var modelName: String = "—"
+    var inputTokens: Int = 0
+    var outputTokens: Int = 0
+    var latencyMs: Int = 0
 
     // MARK: Animation state
 
@@ -292,13 +299,23 @@ struct UltronVoiceView: View {
     }
 
     private var metaRow: some View {
-        HStack(spacing: 10) {
-            metaItem("Mik: \(inputMic)")
-            metaDot()
-            metaItem("Højtaler: \(outputSpeaker)")
-            metaDot()
-            metaItem("Støj: \(noiseDB) dB")
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                metaItem("Mik: \(inputMic)")
+                metaDot()
+                metaItem("Højtaler: \(outputSpeaker)")
+                metaDot()
+                metaItem("Støj: \(noiseDB) dB")
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 10) {
+                metaItem("Model: \(modelName)")
+                metaDot()
+                metaItem("Tokens: \(inputTokens) → \(outputTokens)")
+                metaDot()
+                metaItem(latencyMs > 0 ? "Svar: \(latencyMs) ms" : "Svar: —")
+                Spacer(minLength: 0)
+            }
         }
     }
 

@@ -29,6 +29,7 @@ final class GeminiREST: @unchecked Sendable {
 
     func generate(model: String, request: GeminiRequest, mode: Mode) async throws -> GeminiResponse {
         let urlRequest = try buildRequest(model: model, body: request, streaming: false)
+        await usage.beginTurn()
         let (data, response) = try await session.data(for: urlRequest)
         try validate(response: response, data: data)
 
@@ -57,6 +58,7 @@ final class GeminiREST: @unchecked Sendable {
             let task = Task {
                 do {
                     let urlRequest = try buildRequest(model: model, body: request, streaming: true)
+                    await usage.beginTurn()
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     try validate(response: response, data: nil)
 
@@ -139,11 +141,34 @@ final class GeminiREST: @unchecked Sendable {
     }
 
     private func trackUsage(_ response: GeminiResponse, mode: Mode) {
-        guard let usage = response.usageMetadata else { return }
+        guard let metadata = response.usageMetadata else { return }
+        let input = metadata.promptTokenCount ?? 0
+        let output = metadata.candidatesTokenCount ?? 0
         self.usage.trackUsage(
             model: mode.model,
-            inputTokens: usage.promptTokenCount ?? 0,
-            outputTokens: usage.candidatesTokenCount ?? 0
+            inputTokens: input,
+            outputTokens: output
         )
+        // Per-turn stats for the Ultron HUDs — uses the full model
+        // identifier (e.g. "gemini-2.5-flash") rather than the
+        // GeminiModel enum so non-Gemini callers can surface the
+        // same field.
+        let modelName = Self.prettyModelName(for: mode)
+        Task { @MainActor in
+            self.usage.recordTurn(
+                modelName: modelName,
+                inputTokens: input,
+                outputTokens: output
+            )
+        }
+    }
+
+    /// Friendly name shown in the Ultron Chat + Voice meta row.
+    /// Maps `mode.model` (.flash / .pro) to the canonical Gemini id.
+    private static func prettyModelName(for mode: Mode) -> String {
+        switch mode.model {
+        case .flash: return "gemini-2.5-flash"
+        case .pro:   return "gemini-2.5-pro"
+        }
     }
 }

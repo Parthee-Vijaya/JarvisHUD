@@ -231,6 +231,22 @@ class HUDWindowController {
     private func presentPanel() {
         cancelAutoClose()
         if panel != nil { return }   // already visible — @Observable state updates in place
+        // v2.0 Ultron: if the user just closed the unified panel and a
+        // voice-pipeline error races in, don't resurrect the legacy
+        // corner HUD — surface silently via `hudState.currentPhase` so
+        // the next Ultron open renders the error card instead.
+        if UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true {
+            // Only suppress corner HUD for phase transitions that would
+            // have popped the small HUD. Chat / info / uptodate have
+            // their own present*Panel() paths and are unaffected.
+            switch hudState.currentPhase {
+            case .recording, .processing, .result, .confirmation, .error, .permissionError:
+                LoggingService.shared.log("Suppressing legacy corner HUD (Ultron mode)", level: .debug)
+                return
+            default:
+                break
+            }
+        }
         presentCornerPanel()
     }
 
@@ -412,11 +428,20 @@ class HUDWindowController {
                 infoService: infoModeService,
                 audioLevel: audioLevel,
                 waveform: waveform,
+                hudState: hudState,
+                speechService: speechService,
+                usageTracker: usageTracker ?? UsageTracker(),
                 chatSession: chatSession,
-                onChatSend: { [weak self] text in self?.onChatSend?(text) },
-                onClose:    { [weak self] in self?.close() },
-                onMinimize: { [weak self] in self?.minimizePanel() },
-                onZoom:     { [weak self] in self?.zoomPanel() }
+                conversationHistory: conversationHistory,
+                currentConversationID: currentConversationID,
+                onChatSend:           { [weak self] text in self?.onChatSend?(text) },
+                onAgentApprove:       { [weak self] in self?.onAgentApprove?() },
+                onAgentReject:        { [weak self] in self?.onAgentReject?() },
+                onLoadConversation:   { [weak self] id in self?.onLoadConversation?(id) },
+                onDeleteConversation: { [weak self] id in self?.onDeleteConversation?(id) },
+                onClose:              { [weak self] in self?.close() },
+                onMinimize:           { [weak self] in self?.minimizePanel() },
+                onZoom:               { [weak self] in self?.zoomPanel() }
             ))
             : AnyView(
                 InfoModeView(service: infoModeService) { [weak self] in self?.close() }

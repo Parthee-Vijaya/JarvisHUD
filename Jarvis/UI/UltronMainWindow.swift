@@ -17,14 +17,24 @@ struct UltronMainWindow: View {
     @Bindable var infoService: InfoModeService
     let audioLevel: AudioLevelMonitor
     let waveform: WaveformBuffer
+    @Bindable var hudState: HUDState
+    @Bindable var speechService: SpeechRecognitionService
+    @Bindable var usageTracker: UsageTracker
     let chatSession: ChatSession?
+    let conversationHistory: [ConversationStore.Metadata]
+    let currentConversationID: UUID?
     let onChatSend: (String) -> Void
+    let onAgentApprove: () -> Void
+    let onAgentReject: () -> Void
+    let onLoadConversation: (UUID) -> Void
+    let onDeleteConversation: (UUID) -> Void
     let onClose: () -> Void
     let onMinimize: () -> Void
     let onZoom: () -> Void
 
     @State private var activeTab: UltronTab = UltronMainWindow.restoreTab()
     @State private var showHotkeySheet: Bool = false
+    @State private var isReloading: Bool = false
 
     var body: some View {
         ZStack {
@@ -38,7 +48,9 @@ struct UltronMainWindow: View {
                     onHotkeySheet: { showHotkeySheet.toggle() },
                     onClose: onClose,
                     onMinimize: onMinimize,
-                    onZoom: onZoom
+                    onZoom: onZoom,
+                    onReload: reload,
+                    isReloading: isReloading
                 )
 
                 // Tab content — full-flex below the top bar
@@ -49,12 +61,22 @@ struct UltronMainWindow: View {
                     case .voice:
                         UltronVoiceHost(
                             audioLevel: audioLevel,
-                            waveform: waveform
+                            waveform: waveform,
+                            hudState: hudState,
+                            speechService: speechService,
+                            usageTracker: usageTracker
                         )
                     case .chat:
                         UltronChatHost(
                             session: chatSession,
-                            onSend: onChatSend
+                            usageTracker: usageTracker,
+                            conversationHistory: conversationHistory,
+                            currentConversationID: currentConversationID,
+                            onSend: onChatSend,
+                            onApprove: onAgentApprove,
+                            onReject: onAgentReject,
+                            onLoadConversation: onLoadConversation,
+                            onDeleteConversation: onDeleteConversation
                         )
                     }
                 }
@@ -73,6 +95,29 @@ struct UltronMainWindow: View {
         ))
         .onChange(of: activeTab) { _, new in
             UserDefaults.standard.set(new.rawValue, forKey: UltronMainWindow.screenKey)
+        }
+    }
+
+    // MARK: - Reload
+
+    /// Tab-aware reload: cockpit refreshes all data, voice resets the
+    /// transcript / audio meters, chat clears the active session.
+    private func reload() {
+        guard !isReloading else { return }
+        isReloading = true
+        Task {
+            switch activeTab {
+            case .cockpit:
+                await infoService.refresh(force: true)
+            case .voice:
+                speechService.reset()
+                audioLevel.reset()
+                waveform.reset()
+            case .chat:
+                chatSession?.messages.removeAll()
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await MainActor.run { isReloading = false }
         }
     }
 
@@ -139,28 +184,82 @@ struct UltronMainWindow: View {
 private struct UltronVoiceHost: View {
     let audioLevel: AudioLevelMonitor
     let waveform: WaveformBuffer
+    @Bindable var hudState: HUDState
+    @Bindable var speechService: SpeechRecognitionService
+    @Bindable var usageTracker: UsageTracker
 
-    @State private var state: UltronVoiceState = .idle
     @State private var inputName: String = AudioDeviceInfo.currentInputName() ?? "—"
     @State private var outputName: String = AudioDeviceInfo.currentOutputName() ?? "—"
     @State private var monitorToken: UUID?
+    @State private var recordingStart: Date?
+    @State private var lastQueryForThinking: String = ""
     private let deviceTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
             UltronTheme.rootBackground.ignoresSafeArea()
             UltronVoiceView(
-                state: $state,
+                state: .constant(derivedState),
                 waveform: sampledWaveform,
+                duration: derivedDuration,
                 inputMic: inputName,
                 outputSpeaker: outputName,
-                noiseDB: noiseDB
+                noiseDB: noiseDB,
+                modelName: usageTracker.lastModelName ?? "—",
+                inputTokens: usageTracker.lastInputTokens,
+                outputTokens: usageTracker.lastOutputTokens,
+                latencyMs: usageTracker.lastLatencyMs
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: startMonitoring)
         .onDisappear(perform: stopMonitoring)
         .onReceive(deviceTick) { _ in refreshDeviceNames() }
+        .onChange(of: hudState.currentPhase) { _, new in
+            updateRecordingTimer(for: new)
+        }
+    }
+
+    // MARK: - Derived voice state
+
+    /// Bridge from the legacy `HUDState.Phase` + `SpeechRecognitionService.transcript`
+    /// into the Ultron-native `UltronVoiceState`. The legacy voice pipeline
+    /// drives both and we just read them — no new wiring needed.
+    private var derivedState: UltronVoiceState {
+        switch hudState.currentPhase {
+        case .recording:
+            return .listening(partial: speechService.transcript, final: "")
+        case .processing:
+            return .thinking(query: lastQueryForThinking.isEmpty
+                             ? speechService.transcript
+                             : lastQueryForThinking)
+        case let .result(text):
+            return .speaking(answer: text, citations: [])
+        default:
+            return .idle
+        }
+    }
+
+    private var derivedDuration: TimeInterval {
+        guard let start = recordingStart else { return 0 }
+        return Date().timeIntervalSince(start)
+    }
+
+    private func updateRecordingTimer(for phase: HUDState.Phase) {
+        switch phase {
+        case .recording:
+            if recordingStart == nil { recordingStart = Date() }
+        case .processing:
+            // Freeze the transcript as the "query" so it stays visible
+            // while the pipeline thinks, even if `speechService.transcript`
+            // gets reset by the next recognition task.
+            if !speechService.transcript.isEmpty {
+                lastQueryForThinking = speechService.transcript
+            }
+            recordingStart = nil
+        default:
+            recordingStart = nil
+        }
     }
 
     // MARK: - Audio monitoring lifecycle
@@ -255,12 +354,29 @@ private struct UltronVoiceHost: View {
 
 private struct UltronChatHost: View {
     let session: ChatSession?
+    @Bindable var usageTracker: UsageTracker
+    let conversationHistory: [ConversationStore.Metadata]
+    let currentConversationID: UUID?
     let onSend: (String) -> Void
+    let onApprove: () -> Void
+    let onReject: () -> Void
+    let onLoadConversation: (UUID) -> Void
+    let onDeleteConversation: (UUID) -> Void
 
     var body: some View {
         ZStack {
             UltronTheme.rootBackground.ignoresSafeArea()
-            UltronChatView(session: session, onSend: onSend)
+            UltronChatView(
+                session: session,
+                usageTracker: usageTracker,
+                conversationHistory: conversationHistory,
+                currentConversationID: currentConversationID,
+                onSend: onSend,
+                onApprove: onApprove,
+                onReject: onReject,
+                onLoadConversation: onLoadConversation,
+                onDeleteConversation: onDeleteConversation
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

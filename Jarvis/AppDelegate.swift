@@ -231,7 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Wire the Uptodate + Info panel data sources.
         hudController.updatesService = updatesService
         hudController.infoModeService = infoModeService
-        hudController.focusObserver = focusObserver
+        hudController.usageTracker = usageTracker
 
         pipeline = RecordingPipeline(
             audioCapture: audioCapture,
