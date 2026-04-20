@@ -50,6 +50,7 @@ struct UltronVoiceView: View {
     var waveform: [Double] = []
     var duration: TimeInterval = 0
     var inputMic: String = "MacBook Air"
+    var outputSpeaker: String = "MacBook Air"
     var noiseDB: Int = -42
     var confidencePct: Int = 96
 
@@ -294,9 +295,9 @@ struct UltronVoiceView: View {
         HStack(spacing: 10) {
             metaItem("Mik: \(inputMic)")
             metaDot()
-            metaItem("Støj: \(noiseDB) dB")
+            metaItem("Højtaler: \(outputSpeaker)")
             metaDot()
-            metaItem("Sikkerhed: \(confidencePct)%")
+            metaItem("Støj: \(noiseDB) dB")
             Spacer(minLength: 0)
         }
     }
@@ -431,9 +432,14 @@ private struct WaveformStrip: View {
     private func bar(index: Int, height: CGFloat) -> some View {
         switch state {
         case .idle:
+            // Idle still responds to mic — shows live level in a muted
+            // colour so the user can verify the tap is alive before
+            // pressing to dictate. Falls back to minBar when samples
+            // are empty (no audio pipe attached).
             RoundedRectangle(cornerRadius: 1, style: .continuous)
                 .fill(UltronTheme.line)
-                .frame(height: Self.minBar)
+                .frame(height: idleAmplitude(for: index, height: height))
+                .animation(.easeOut(duration: 0.08), value: samples)
 
         case .listening:
             RoundedRectangle(cornerRadius: 1, style: .continuous)
@@ -451,6 +457,18 @@ private struct WaveformStrip: View {
                 .fill(UltronTheme.ok)
                 .frame(height: speakingHeight(index: index, height: height))
         }
+    }
+
+    /// Idle bar height — same per-sample lookup as `.listening` but
+    /// capped at ~60% of strip height so the HUD reads as "quiet /
+    /// waiting" rather than "active capture".
+    private func idleAmplitude(for index: Int, height: CGFloat) -> CGFloat {
+        if samples.isEmpty { return Self.minBar }
+        let scaled = Double(index) * Double(samples.count - 1) / Double(Self.barCount - 1)
+        let clamped = max(0, min(Double(samples.count - 1), scaled))
+        let sample = samples[Int(clamped.rounded())]
+        let amp = CGFloat(max(0, min(1, sample)))
+        return max(Self.minBar, amp * height * 0.6)
     }
 
     /// Listening: pull from caller-supplied samples, falling back to a

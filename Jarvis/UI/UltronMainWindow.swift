@@ -1,3 +1,5 @@
+import AVFoundation
+import Combine
 import Darwin
 import SwiftUI
 
@@ -122,15 +124,27 @@ struct UltronMainWindow: View {
 
 // MARK: - Tab content hosts
 
-/// Voice tab host — wires the real `AudioLevelMonitor` + `WaveformBuffer`
-/// (owned by `HUDWindowController`) into the Ultron voice card so the
-/// waveform pulses with live mic input, the noise dB label reads RMS in
-/// dBFS, and the mic label names the actual Mac model.
+/// Voice tab host — attaches the shared audio engine's tap to the
+/// Ultron voice card so the waveform + decibel meter pulse with live
+/// mic input whenever the tab is visible.
+///
+/// Behaviour:
+/// - On appear: start `SharedAudioEngine`, subscribe with a tap handler
+///   that feeds both `AudioLevelMonitor` (RMS) and `WaveformBuffer`
+///   (peak). On disappear: unsubscribe — the engine stops itself once
+///   the last subscriber leaves (recording subscriber is separate).
+/// - Poll `AudioDeviceInfo.currentInputName` / `currentOutputName`
+///   every 2 s so the mic + speaker labels update when the user
+///   switches default device in System Settings → Sound.
 private struct UltronVoiceHost: View {
     let audioLevel: AudioLevelMonitor
     let waveform: WaveformBuffer
 
     @State private var state: UltronVoiceState = .idle
+    @State private var inputName: String = AudioDeviceInfo.currentInputName() ?? "—"
+    @State private var outputName: String = AudioDeviceInfo.currentOutputName() ?? "—"
+    @State private var monitorToken: UUID?
+    private let deviceTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -138,13 +152,86 @@ private struct UltronVoiceHost: View {
             UltronVoiceView(
                 state: $state,
                 waveform: sampledWaveform,
-                inputMic: Self.macModelName,
-                noiseDB: noiseDB,
-                confidencePct: confidenceFromLevel
+                inputMic: inputName,
+                outputSpeaker: outputName,
+                noiseDB: noiseDB
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear(perform: startMonitoring)
+        .onDisappear(perform: stopMonitoring)
+        .onReceive(deviceTick) { _ in refreshDeviceNames() }
     }
+
+    // MARK: - Audio monitoring lifecycle
+
+    private func startMonitoring() {
+        guard monitorToken == nil else { return }
+        do {
+            try SharedAudioEngine.shared.start()
+        } catch {
+            LoggingService.shared.log("Voice HUD: SharedAudioEngine.start failed — \(error)", level: .warning)
+            return
+        }
+        let level = audioLevel
+        let wave = waveform
+        monitorToken = SharedAudioEngine.shared.addSubscriber { buffer in
+            handleBuffer(buffer, level: level, waveform: wave)
+        }
+        refreshDeviceNames()
+    }
+
+    private func stopMonitoring() {
+        if let token = monitorToken {
+            SharedAudioEngine.shared.removeSubscriber(token)
+            monitorToken = nil
+        }
+        audioLevel.reset()
+        waveform.reset()
+    }
+
+    /// Runs on the audio-render thread. Mirrors `AudioCaptureManager`'s
+    /// RMS + peak math so the level / waveform indicators feel identical
+    /// whether or not a recording is in progress.
+    private nonisolated static func handleBuffer(
+        _ buffer: AVAudioPCMBuffer,
+        level: AudioLevelMonitor,
+        waveform: WaveformBuffer
+    ) {
+        guard let channelData = buffer.floatChannelData?[0] else { return }
+        let frameCount = Int(buffer.frameLength)
+        var sumOfSquares: Float = 0
+        var peak: Float = 0
+        for i in 0..<frameCount {
+            let s = max(-1.0, min(1.0, channelData[i]))
+            sumOfSquares += s * s
+            if abs(s) > abs(peak) { peak = s }
+        }
+        let rms = frameCount > 0 ? sqrt(sumOfSquares / Float(frameCount)) : 0
+        let boostedRMS = min(1.0, Double(rms) * 3.0)
+        let oscPeak = max(-1.0, min(1.0, peak * 2.5))
+        Task { @MainActor in
+            level.submit(rms: boostedRMS)
+            waveform.push(peak: oscPeak)
+        }
+    }
+
+    private func handleBuffer(_ buffer: AVAudioPCMBuffer, level: AudioLevelMonitor, waveform: WaveformBuffer) {
+        Self.handleBuffer(buffer, level: level, waveform: waveform)
+    }
+
+    // MARK: - Device name polling
+
+    private func refreshDeviceNames() {
+        if let input = AudioDeviceInfo.currentInputName(), input != inputName {
+            inputName = input
+        }
+        if let output = AudioDeviceInfo.currentOutputName(), output != outputName {
+            outputName = output
+        }
+    }
+
+    // MARK: - UI derivations
 
     /// Downsample the 200-bucket `WaveformBuffer` to the 48 bars the
     /// Ultron strip expects. Normalises -1…1 peaks to 0…1 amplitudes.
@@ -164,34 +251,6 @@ private struct UltronVoiceHost: View {
         let lvl = max(0.0001, audioLevel.level)
         return max(-80, Int((20 * log10(lvl)).rounded()))
     }
-
-    /// Rough "mic sikkerhed" proxy — maps level into 0…100 via a squashed
-    /// log curve. Real speech-to-text confidence replaces this once the
-    /// voice pipeline is wired in.
-    private var confidenceFromLevel: Int {
-        let dB = Double(noiseDB)
-        let normalised = max(0, min(1, (dB + 60) / 60))
-        return Int((60 + normalised * 40).rounded())
-    }
-
-    /// `sysctl hw.model` one-shot — mapped to a friendly family name so
-    /// the meta row reads "Mik: MacBook Pro" not "Mik: MacBookPro18,2".
-    static let macModelName: String = {
-        var size: size_t = 0
-        sysctlbyname("hw.model", nil, &size, nil, 0)
-        guard size > 0 else { return "Mac" }
-        var buffer = [CChar](repeating: 0, count: size)
-        sysctlbyname("hw.model", &buffer, &size, nil, 0)
-        let raw = String(cString: buffer)
-        if raw.hasPrefix("MacBookAir")   { return "MacBook Air" }
-        if raw.hasPrefix("MacBookPro")   { return "MacBook Pro" }
-        if raw.hasPrefix("MacBook")      { return "MacBook" }
-        if raw.hasPrefix("Macmini")      { return "Mac mini" }
-        if raw.hasPrefix("iMac")         { return "iMac" }
-        if raw.hasPrefix("MacPro")       { return "Mac Pro" }
-        if raw.hasPrefix("MacStudio")    { return "Mac Studio" }
-        return raw.isEmpty ? "Mac" : raw
-    }()
 }
 
 private struct UltronChatHost: View {
