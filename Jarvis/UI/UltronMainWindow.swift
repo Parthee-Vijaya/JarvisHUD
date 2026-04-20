@@ -96,6 +96,17 @@ struct UltronMainWindow: View {
         .onChange(of: activeTab) { _, new in
             UserDefaults.standard.set(new.rawValue, forKey: UltronMainWindow.screenKey)
         }
+        // Live tab switching — `HUDWindowController.showChat` /
+        // `showUptodate` posts this notification so an already-mounted
+        // window flips tab without waiting on the next `restoreTab()`.
+        .onReceive(NotificationCenter.default.publisher(
+            for: HUDWindowController.ultronSwitchTabNotification
+        )) { note in
+            if let raw = note.userInfo?["tab"] as? String,
+               let tab = UltronTab(rawValue: raw) {
+                activeTab = tab
+            }
+        }
     }
 
     // MARK: - Reload

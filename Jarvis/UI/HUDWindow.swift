@@ -22,6 +22,9 @@ class HUDWindowController {
     /// Set by AppDelegate once services exist. When nil, focus suppression
     /// is a no-op (defensive — lets the app run even if wiring regresses).
     var focusObserver: FocusModeObserver?
+    /// Shared usage-tracker from AppDelegate so the Ultron Chat / Voice
+    /// HUDs can render live model + token + latency stats.
+    var usageTracker: UsageTracker?
     var onAgentChatSend: ((String) -> Void)?
     var onAgentApprove: (() -> Void)?
     var onAgentReject: (() -> Void)?
@@ -134,10 +137,21 @@ class HUDWindowController {
     func showChat() {
         cancelRecordingTimer()
         hudState.currentPhase = .chat
+        // v2.0 Ultron: route chat hotkey (⌥ Return / ⌥ ⇧ A) into the
+        // unified window's Chat tab instead of the legacy Spotlight-
+        // style panel. If Ultron is already up we just flip the tab
+        // via the UserDefault key — `UltronMainWindow` observes it on
+        // next mount — and the existing panel stays put.
+        if isUltronUnifiedEnabled {
+            requestUltronTab("chat")
+            if panel == nil {
+                presentInfoPanel()
+            }
+            return
+        }
         if panel == nil {
             presentChatPanel()
         } else {
-            // Resize existing panel to chat size
             resizePanelForChat()
         }
     }
@@ -161,6 +175,17 @@ class HUDWindowController {
         cancelRecordingTimer()
         cancelAutoClose()
         hudState.currentPhase = .uptodate
+        // v2.0 Ultron: no dedicated Briefing tab yet — route to the
+        // Cockpit tab so the "jarvis://briefing" URL scheme + ⌥ ⇧ B
+        // hotkey open the unified window on Cockpit. Legacy UptodateView
+        // is only used when Ultron mode is disabled.
+        if isUltronUnifiedEnabled {
+            requestUltronTab("cockpit")
+            if panel == nil {
+                presentInfoPanel()
+            }
+            return
+        }
         if panel == nil {
             presentUptodatePanel()
         } else {
@@ -237,6 +262,24 @@ class HUDWindowController {
         UserDefaults.standard.object(forKey: "ultronRedesignEnabled") as? Bool ?? true
     }
 
+    /// Broadcast when a legacy `showChat`/`showUptodate`/`showInfoMode`
+    /// call should flip the Ultron tab *live* (the unified window is
+    /// already mounted — persisting to UserDefaults alone isn't enough
+    /// because `restoreTab()` only runs at init).
+    static let ultronSwitchTabNotification = Notification.Name("ultron.switchTab")
+
+    /// Persist the Ultron tab to UserDefaults AND post a live-switch
+    /// notification so an already-mounted `UltronMainWindow` updates
+    /// immediately. Use this instead of writing the UserDefault directly.
+    private func requestUltronTab(_ tab: String) {
+        UserDefaults.standard.set(tab, forKey: "ultron-screen")
+        NotificationCenter.default.post(
+            name: Self.ultronSwitchTabNotification,
+            object: nil,
+            userInfo: ["tab": tab]
+        )
+    }
+
     private func presentPanel() {
         cancelAutoClose()
         if panel != nil { return }   // already visible — @Observable state updates in place
@@ -250,7 +293,7 @@ class HUDWindowController {
             switch hudState.currentPhase {
             case .recording, .processing, .result, .confirmation, .error, .permissionError:
                 LoggingService.shared.log("Routing voice/error flow through Ultron (phase=\(hudState.currentPhase))", level: .debug)
-                UserDefaults.standard.set("voice", forKey: "ultron-screen")
+                requestUltronTab("voice")
                 presentInfoPanel()
                 return
             default:
@@ -344,6 +387,15 @@ class HUDWindowController {
     // MARK: - Chat Panel
 
     private func presentChatPanel() {
+        if isUltronUnifiedEnabled {
+            LoggingService.shared.log(
+                "presentChatPanel blocked — Ultron mode. Routing to presentInfoPanel.",
+                level: .warning
+            )
+            requestUltronTab("chat")
+            presentInfoPanel()
+            return
+        }
         cancelAutoClose()
 
         if panel != nil {
@@ -390,6 +442,15 @@ class HUDWindowController {
     // MARK: - Uptodate Panel
 
     private func presentUptodatePanel() {
+        if isUltronUnifiedEnabled {
+            LoggingService.shared.log(
+                "presentUptodatePanel blocked — Ultron mode. Routing to presentInfoPanel.",
+                level: .warning
+            )
+            requestUltronTab("cockpit")
+            presentInfoPanel()
+            return
+        }
         guard let updatesService else {
             LoggingService.shared.log("Uptodate panel requested but service not wired", level: .warning)
             return

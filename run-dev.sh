@@ -24,27 +24,33 @@ fi
 
 if [[ "${1:-}" != "--no-build" ]]; then
     echo "▶ building Debug…"
-    # NB: we ENABLE code signing with the adhoc "-" identity instead of skipping
-    # it (CODE_SIGNING_ALLOWED=YES). Reason: without a real codesign pass the
-    # linker produces a binary where the Info.plist isn't bound into the signed
-    # code directory. TCC (the macOS permissions database) keys its grants on
-    # the signed bundle ID, so with no Info.plist binding every rebuild gets
-    # treated as a *different* app and existing Accessibility / Microphone /
-    # Screen-Recording grants don't carry over — causing the permission dialog
-    # to pop up on every single run. Signing adhoc keeps `pavi.Jarvis` stable
-    # across builds and lets TCC track a single persistent identity.
-    # v1.4: dropped the adhoc `-` identity override because it breaks
-    # Widget Extension targets — App Groups entitlements require a real
-    # provisioning profile, which Xcode only issues under automatic
-    # signing. The project's targets have DEVELOPMENT_TEAM + automatic
-    # signing set correctly; let xcodebuild do its thing so widgets work.
-    # TCC preservation still holds because the main app's bundle ID
-    # (pavi.Jarvis) is stable regardless of signing identity.
-    xcodebuild -project "$PROJECT" \
-        -scheme "$SCHEME" \
-        -configuration Debug \
-        -derivedDataPath "$BUILD_DIR" \
-        build 2>&1 | grep -E "(error:|warning:|BUILD SUCCEEDED|BUILD FAILED)" | head -30
+
+    # Prefer the persistent "Jarvis Dev" self-signed identity when it
+    # exists — makes macOS Keychain ACLs ("Always Allow" for Gemini key)
+    # survive rebuilds. Run `./create-dev-signing-cert.sh` once to
+    # install it. Without the cert, we fall back to Xcode's automatic
+    # signing (required by Widget Extension App Groups).
+    BUILD_ARGS=(
+        -project "$PROJECT"
+        -scheme "$SCHEME"
+        -configuration Debug
+        -derivedDataPath "$BUILD_DIR"
+    )
+    DEV_IDENTITY="Jarvis Dev"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_IDENTITY"; then
+        echo "▶ using persistent code-signing identity '$DEV_IDENTITY'"
+        BUILD_ARGS+=(
+            CODE_SIGN_STYLE=Manual
+            CODE_SIGN_IDENTITY="$DEV_IDENTITY"
+            DEVELOPMENT_TEAM=""
+        )
+    else
+        echo "▶ '$DEV_IDENTITY' not found — using Xcode automatic signing"
+        echo "  (tip: run ./create-dev-signing-cert.sh once to avoid Keychain re-prompts)"
+    fi
+
+    xcodebuild "${BUILD_ARGS[@]}" build 2>&1 \
+        | grep -E "(error:|warning:|BUILD SUCCEEDED|BUILD FAILED)" | head -30
 fi
 
 if [[ ! -d "$APP_PATH" ]]; then
