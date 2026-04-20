@@ -1,20 +1,15 @@
 import SwiftUI
 
-/// Hjem · Rute (Home · Route) tile — Ultron redesign.
+/// Hjem · Rute (Home · Route) tile — Ultron redesign, Din rute row.
 ///
-/// Matches the handoff spec:
-/// - Tone: rose (top border + icon-box tint)
-/// - 6-col span, 2-col internal: 200pt spec column + live MapKit view
-/// - Big number: expected travel time in minutes, italic ETA caption
-/// - KV grid: Afstand / Normal / Tesla / Dest. / Ladere
-/// - Meta: warn-dot + "+N min forsinkelse" when delayed, else ok-dot "Fri bane"
+/// Visual parity with the Udenfor row: `.large` big-number + KV grid,
+/// 54pt icon box, live-status footer meta. Map panel holds the
+/// interactive route + charger overlay.
 struct UltronHjemRuteTile: View {
     let commute: CommuteEstimate?
     let chargers: [ChargerLocation]
     let destinationWeather: WeatherSnapshot?
-    /// When nil the service has not yet resolved its first fetch; the
-    /// tile's loading placeholder uses an explicit "venter på lokation"
-    /// caption instead of the generic redacted rectangles.
+    /// When nil the service has not yet resolved its first fetch.
     var lastRefresh: Date? = nil
 
     var body: some View {
@@ -24,9 +19,9 @@ struct UltronHjemRuteTile: View {
             tone: .rose
         ) {
             if let c = commute {
-                HStack(alignment: .top, spacing: 18) {
+                HStack(alignment: .top, spacing: 22) {
                     specColumn(c)
-                        .frame(width: 200, alignment: .leading)
+                        .frame(width: 240, alignment: .leading)
                     mapColumn(c)
                         .frame(maxWidth: .infinity)
                 }
@@ -42,25 +37,26 @@ struct UltronHjemRuteTile: View {
         }
     }
 
-    // MARK: - Spec column (200pt)
+    // MARK: - Spec column (240pt)
 
     private func specColumn(_ c: CommuteEstimate) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             UltronBigNumberBlock(
                 number: "\(Int((c.expectedTravelTime / 60).rounded()))",
                 unit: "min",
-                tone: .rose
+                tone: .rose,
+                size: .large
             ) {
                 Image(systemName: "house.fill")
-                    .font(.system(size: 20, weight: .regular))
+                    .font(.system(size: 24, weight: .regular))
                     .foregroundStyle(UltronTheme.TileTone.rose.color)
                     .symbolRenderingMode(.hierarchical)
             }
-            Text("ETA \(etaString(for: c))")
-                .font(UltronTheme.Typography.caption(size: 13))
+            Text("ETA \(etaString(for: c)) · \(c.toLabel)")
+                .font(UltronTheme.Typography.caption(size: 15))
                 .foregroundStyle(UltronTheme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
-            UltronKVGrid(pairs: kvPairs(for: c), columns: 1)
+            UltronKVGrid(pairs: kvPairs(for: c), columns: 1, size: .large)
         }
     }
 
@@ -73,7 +69,7 @@ struct UltronHjemRuteTile: View {
             coordinates: c.routeCoordinates,
             chargers: chargers
         )
-        .frame(minHeight: 160, maxHeight: .infinity)
+        .frame(minHeight: 220, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
@@ -88,7 +84,10 @@ struct UltronHjemRuteTile: View {
         pairs.append(("Afstand", c.prettyDistance))
         if let baseline = c.baselineTravelTime {
             let baselineMin = Int((baseline / 60).rounded())
-            pairs.append(("Normal", "\(baselineMin) min"))
+            let liveMin = Int((c.expectedTravelTime / 60).rounded())
+            let delta = liveMin - baselineMin
+            let sign = delta > 0 ? "+" : ""
+            pairs.append(("Normal", "\(baselineMin) min  \(sign)\(delta)"))
         }
         pairs.append((
             "Tesla",
@@ -98,8 +97,6 @@ struct UltronHjemRuteTile: View {
             let temp = Int(w.current.temperature.rounded())
             let label = WeatherCode.label(for: w.current.weatherCode).lowercased()
             pairs.append(("Dest.", "\(temp)° \(label)"))
-        } else if !c.toLabel.isEmpty {
-            pairs.append(("Dest.", c.toLabel))
         }
         pairs.append(("Ladere", "\(chargers.count) på ruten"))
         return pairs
@@ -121,13 +118,13 @@ struct UltronHjemRuteTile: View {
            c.expectedTravelTime - baseline > 120 {
             let delayMin = Int(((c.expectedTravelTime - baseline) / 60).rounded())
             UltronMetaRow(
-                text: "+\(delayMin) min forsinkelse",
+                text: "+\(delayMin) min forsinkelse · live trafik",
                 dotColor: UltronTheme.warn,
-                pulsing: false
+                pulsing: true
             )
         } else {
             UltronMetaRow(
-                text: "Fri bane",
+                text: "Fri bane · \(chargers.count) ladere på ruten",
                 dotColor: UltronTheme.ok,
                 pulsing: false
             )
@@ -143,20 +140,20 @@ struct UltronHjemRuteTile: View {
                  : "Ingen rute sat op — tilføj hjemmeadresse i Settings.")
                 .font(UltronTheme.Typography.caption(size: 14))
                 .foregroundStyle(UltronTheme.textDim)
-            HStack(alignment: .top, spacing: 18) {
-                VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 22) {
+                VStack(alignment: .leading, spacing: 12) {
                     RoundedRectangle(cornerRadius: 10).fill(UltronTheme.ink3)
-                        .frame(width: 160, height: 56)
+                        .frame(width: 180, height: 56)
                     RoundedRectangle(cornerRadius: 4).fill(UltronTheme.ink3)
-                        .frame(height: 14).frame(maxWidth: 140)
-                    ForEach(0..<3) { _ in
+                        .frame(height: 14).frame(maxWidth: 180)
+                    ForEach(0..<4) { _ in
                         RoundedRectangle(cornerRadius: 4).fill(UltronTheme.ink3)
-                            .frame(height: 12)
+                            .frame(height: 14)
                     }
                 }
-                .frame(width: 200, alignment: .leading)
+                .frame(width: 240, alignment: .leading)
                 RoundedRectangle(cornerRadius: 10).fill(UltronTheme.ink3)
-                    .frame(minHeight: 160, maxHeight: .infinity)
+                    .frame(minHeight: 220, maxHeight: .infinity)
             }
             .redacted(reason: .placeholder)
         }
