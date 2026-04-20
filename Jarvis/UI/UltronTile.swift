@@ -101,35 +101,43 @@ struct UltronBigNumberBlock<Icon: View>: View {
     let number: String
     let unit: String?
     let tone: UltronTheme.TileTone
+    var size: Size = .regular
     @ViewBuilder let icon: () -> Icon
 
+    enum Size { case regular, large }
+
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: iconSpacing) {
             icon()
-                .frame(width: 44, height: 44)
+                .frame(width: iconBox, height: iconBox)
                 .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(tone.soft)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .stroke(tone.border, lineWidth: 1)
                         )
                 )
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(number)
-                    .font(UltronTheme.Typography.bigNumber(size: 34))
-                    .tracking(-0.7)
+                    .font(UltronTheme.Typography.bigNumber(size: numberSize))
+                    .tracking(-0.9)
                     .foregroundStyle(UltronTheme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if let unit {
                     Text(unit)
-                        .font(UltronTheme.Typography.bigNumber(size: 18))
+                        .font(UltronTheme.Typography.bigNumber(size: unitSize))
                         .foregroundStyle(UltronTheme.textDim)
                 }
             }
         }
     }
+
+    private var iconBox: CGFloat    { size == .large ? 54 : 44 }
+    private var iconSpacing: CGFloat { size == .large ? 16 : 12 }
+    private var numberSize: CGFloat  { size == .large ? 42 : 34 }
+    private var unitSize: CGFloat    { size == .large ? 22 : 18 }
 }
 
 // MARK: - KV grid
@@ -137,24 +145,27 @@ struct UltronBigNumberBlock<Icon: View>: View {
 /// Two-column telemetry grid — mono label / sans value. Used beneath the
 /// big-number block on most tiles.
 struct UltronKVGrid: View {
+    enum Size { case regular, large }
+
     let pairs: [(label: String, value: String)]
     var columns: Int = 2
+    var size: Size = .regular
 
     var body: some View {
         let gridColumns = Array(
-            repeating: GridItem(.flexible(), spacing: 16, alignment: .leading),
+            repeating: GridItem(.flexible(), spacing: rowSpacingH, alignment: .leading),
             count: columns
         )
-        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
+        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: rowSpacingV) {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                 HStack(alignment: .firstTextBaseline) {
                     Text(pair.label)
-                        .font(.custom(UltronTheme.FontName.monoRegular, size: 10.5))
+                        .font(.custom(UltronTheme.FontName.monoRegular, size: labelSize))
                         .foregroundStyle(UltronTheme.textFaint)
                         .lineLimit(1)
                     Spacer(minLength: 6)
                     Text(pair.value)
-                        .font(UltronTheme.Typography.body(size: 12.5))
+                        .font(UltronTheme.Typography.body(size: valueSize))
                         .foregroundStyle(UltronTheme.text)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
@@ -162,6 +173,11 @@ struct UltronKVGrid: View {
             }
         }
     }
+
+    private var labelSize: CGFloat { size == .large ? 11.5 : 10.5 }
+    private var valueSize: CGFloat { size == .large ? 14.5 : 12.5 }
+    private var rowSpacingV: CGFloat { size == .large ? 11 : 8 }
+    private var rowSpacingH: CGFloat { size == .large ? 20 : 16 }
 }
 
 // MARK: - Meta row (live dot + text)

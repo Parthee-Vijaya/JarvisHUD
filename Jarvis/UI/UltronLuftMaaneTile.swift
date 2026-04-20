@@ -1,13 +1,12 @@
 import SwiftUI
 
-/// Luft & Måne (Air & Moon) tile — Ultron redesign.
+/// Luft & Måne (Air & Moon) tile — Ultron redesign, Udenfor row.
 ///
-/// Matches the handoff spec:
-/// - Tone: lilac (top border + icon-box tint)
-/// - Icon: moon-phase SF Symbol
-/// - Big number: AQI value ("28 AQI")
-/// - Italic caption: "Luft god · måne tiltagende" (derived from current bands)
-/// - 2-col KV grid: PM 2.5, UV-indeks, Måne %, Næste fuldmåne
+/// - Tone: lilac
+/// - 54pt icon box + 42pt serif AQI + "AQI" unit
+/// - Illumination dial visualising moon phase + %
+/// - 2×2 large KV grid (PM 2.5 · PM 10, UV-indeks · Måne-alder)
+/// - Caption "Luft god · måne tiltagende"
 struct UltronLuftMaaneTile: View {
     let airQuality: AirQualitySnapshot?
     let moon: MoonSnapshot
@@ -18,23 +17,33 @@ struct UltronLuftMaaneTile: View {
             english: "Air & Moon",
             tone: .lilac
         ) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
                 UltronBigNumberBlock(
                     number: aqiNumberText,
                     unit: "AQI",
-                    tone: .lilac
+                    tone: .lilac,
+                    size: .large
                 ) {
                     Image(systemName: moon.phase.symbol)
-                        .font(.system(size: 22, weight: .regular))
+                        .font(.system(size: 28, weight: .regular))
                         .foregroundStyle(UltronTheme.TileTone.lilac.color)
                         .symbolRenderingMode(.hierarchical)
                 }
                 Text(caption)
-                    .font(UltronTheme.Typography.caption(size: 13))
+                    .font(UltronTheme.Typography.caption(size: 15))
                     .foregroundStyle(UltronTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)
-                UltronKVGrid(pairs: kvPairs)
+                moonDial
+                UltronKVGrid(pairs: kvPairs, size: .large)
             }
+        } meta: {
+            EmptyView()
+        } footer: {
+            UltronMetaRow(
+                text: "Næste fuldmåne · \(fullMoonFormatted)",
+                dotColor: UltronTheme.TileTone.lilac.color,
+                pulsing: false
+            )
         }
     }
 
@@ -63,6 +72,50 @@ struct UltronLuftMaaneTile: View {
         return "Måne \(moonLabel)"
     }
 
+    // MARK: - Moon dial
+
+    /// Horizontal strip: small filled circle visualising illumination %
+    /// on the left, then live age / phase description on the right.
+    /// Gives the tile a visual anchor equivalent to the sun arc in the
+    /// Sol tile so the Udenfor row feels symmetric.
+    private var moonDial: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(UltronTheme.ink3)
+                Circle()
+                    .trim(from: 0, to: CGFloat(moon.illuminationPercent) / 100)
+                    .stroke(
+                        UltronTheme.TileTone.lilac.color,
+                        style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                Text("\(moon.illuminationPercent)")
+                    .font(.custom(UltronTheme.FontName.serifRoman, size: 16))
+                    .foregroundStyle(UltronTheme.text)
+            }
+            .frame(width: 48, height: 48)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(moon.phase.label)
+                    .font(.custom(UltronTheme.FontName.serifRoman, size: 15).weight(.medium))
+                    .foregroundStyle(UltronTheme.text)
+                Text(ageDescription)
+                    .font(.custom(UltronTheme.FontName.monoRegular, size: 11))
+                    .tracking(0.4)
+                    .foregroundStyle(UltronTheme.textMute)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var ageDescription: String {
+        let age = Int(moon.ageDays.rounded())
+        let synodic = 29
+        return "Dag \(age) / \(synodic) · \(moon.illuminationPercent) % lyst"
+    }
+
     // MARK: - KV pairs
 
     private var kvPairs: [(label: String, value: String)] {
@@ -74,6 +127,12 @@ struct UltronLuftMaaneTile: View {
             pairs.append(("PM 2.5", "—"))
         }
 
+        if let pm10 = airQuality?.pm10 {
+            pairs.append(("PM 10", String(format: "%.0f µg/m³", pm10)))
+        } else {
+            pairs.append(("PM 10", "—"))
+        }
+
         if let uv = airQuality?.uvIndex {
             let band = airQuality?.uvBand.label.lowercased() ?? ""
             let value = String(format: "%.1f", uv)
@@ -82,27 +141,17 @@ struct UltronLuftMaaneTile: View {
             pairs.append(("UV-indeks", "—"))
         }
 
-        let direction = moonDirectionWord(phase: moon.phase)
-        pairs.append(("Måne", "\(moon.illuminationPercent) % \(direction)"))
-
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "da_DK")
-        df.dateFormat = "d. MMM"
-        pairs.append(("Næste fuldmåne", df.string(from: moon.nextFullMoon)))
+        pairs.append(("Måne-alder", "\(Int(moon.ageDays.rounded())) dage"))
 
         return pairs
     }
 
-    /// Map the moon phase to a short Danish direction word used in the KV grid
-    /// ("74 % tiltagende" / "32 % aftagende").
-    private func moonDirectionWord(phase: MoonSnapshot.Phase) -> String {
-        switch phase {
-        case .newMoon, .waxingCrescent, .firstQuarter, .waxingGibbous:
-            return "tiltagende"
-        case .fullMoon:
-            return "fuld"
-        case .waningGibbous, .lastQuarter, .waningCrescent:
-            return "aftagende"
-        }
+    // MARK: - Full moon footer
+
+    private var fullMoonFormatted: String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "da_DK")
+        df.dateFormat = "d. MMM"
+        return df.string(from: moon.nextFullMoon)
     }
 }

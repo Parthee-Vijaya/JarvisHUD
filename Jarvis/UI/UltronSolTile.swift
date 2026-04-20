@@ -1,15 +1,12 @@
 import SwiftUI
 
-/// Sol (Sun) tile — Ultron redesign.
+/// Sol (Sun) tile — Ultron redesign, Udenfor row.
 ///
-/// Matches the handoff spec:
-/// - Tone: cream (top border + icon-box tint)
-/// - Icon: `sun.max.fill` in accent cyan-blue
-/// - Big number: daylight length ("13h 46m")
-/// - Italic caption: "Dagslys i dag"
-/// - Mono sunrise · transit · sunset row
-/// - 2-col KV grid: Solopgang, Solnedgang, Næste helligdag
-/// - Meta: solstice delta ("Forår · +3m 42s" / "Vinter · −2m 10s")
+/// - Tone: cream
+/// - 54pt icon box + 42pt serif daylight ("13h 46m")
+/// - Tall sun-arc chart (82pt) with sunrise + noon + sunset tick labels
+/// - 2×2 large KV grid (Solopgang · Middagssol, Solnedgang · Næste helligdag)
+/// - Footer: solstice delta meta ("Forår · +3m 42s")
 struct UltronSolTile: View {
     let weather: WeatherSnapshot?
     /// Latitude used for the solstice daylight-delta calculation. If nil the
@@ -23,28 +20,27 @@ struct UltronSolTile: View {
             tone: .cream
         ) {
             if let today = weather?.daily.first, let daylight = today.daylight {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 16) {
                     UltronBigNumberBlock(
                         number: formattedDaylight(daylight),
                         unit: nil,
-                        tone: .cream
+                        tone: .cream,
+                        size: .large
                     ) {
                         Image(systemName: "sun.max.fill")
-                            .font(.system(size: 22, weight: .regular))
+                            .font(.system(size: 28, weight: .regular))
                             .foregroundStyle(UltronTheme.accent)
                             .symbolRenderingMode(.hierarchical)
                     }
-                    Text("Dagslys i dag")
-                        .font(UltronTheme.Typography.caption(size: 13))
+                    Text(sunCaption(for: today))
+                        .font(UltronTheme.Typography.caption(size: 15))
                         .foregroundStyle(UltronTheme.textDim)
                         .fixedSize(horizontal: false, vertical: true)
                     if let sunrise = today.sunrise, let sunset = today.sunset {
                         SunArcView(sunrise: sunrise, sunset: sunset)
-                            .frame(height: 58)
-                            .padding(.top, 2)
-                        sunTimesRow(sunrise: sunrise, sunset: sunset)
+                            .frame(height: 82)
                     }
-                    UltronKVGrid(pairs: kvPairs(today: today))
+                    UltronKVGrid(pairs: kvPairs(today: today), size: .large)
                 }
             } else {
                 loadingPlaceholder
@@ -62,20 +58,31 @@ struct UltronSolTile: View {
         }
     }
 
-    // MARK: - Sun-times row (sunrise · transit · sunset)
+    // MARK: - Caption
 
-    private func sunTimesRow(sunrise: Date, sunset: Date) -> some View {
-        let transit = Date(timeIntervalSince1970:
-            (sunrise.timeIntervalSince1970 + sunset.timeIntervalSince1970) / 2)
-        let format: (Date) -> String = { date in
-            let df = DateFormatter()
-            df.locale = Locale(identifier: "da_DK")
-            df.dateFormat = "HH:mm"
-            return df.string(from: date)
+    /// "Solen står endnu i 2t 14m" / "Solen sætter om 1t 03m". Uses the live
+    /// time-of-day relative to sunrise/sunset so the caption feels alive.
+    private func sunCaption(for today: WeatherSnapshot.DailyPoint) -> String {
+        guard let sunrise = today.sunrise, let sunset = today.sunset else {
+            return "Dagslys i dag"
         }
-        return Text("\(format(sunrise))  ·  \(format(transit))  ·  \(format(sunset))")
-            .font(UltronTheme.Typography.kvLabel())
-            .foregroundStyle(UltronTheme.textMute)
+        let now = Date()
+        if now < sunrise {
+            return "Solopgang om \(relative(to: sunrise))"
+        }
+        if now < sunset {
+            return "Solen står endnu i \(relative(to: sunset))"
+        }
+        let tomorrow = sunrise.addingTimeInterval(86_400)
+        return "Solen er væk — op igen om \(relative(to: tomorrow))"
+    }
+
+    private func relative(to target: Date) -> String {
+        let seconds = max(0, Int(target.timeIntervalSinceNow))
+        let hours = seconds / 3600
+        let mins = (seconds % 3600) / 60
+        if hours > 0 { return String(format: "%dt %02dm", hours, mins) }
+        return "\(mins)m"
     }
 
     // MARK: - KV pairs
@@ -89,6 +96,11 @@ struct UltronSolTile: View {
         if let sunrise = today.sunrise {
             pairs.append(("Solopgang", timeFormatter.string(from: sunrise)))
         }
+        if let sunrise = today.sunrise, let sunset = today.sunset {
+            let transit = Date(timeIntervalSince1970:
+                (sunrise.timeIntervalSince1970 + sunset.timeIntervalSince1970) / 2)
+            pairs.append(("Middagssol", timeFormatter.string(from: transit)))
+        }
         if let sunset = today.sunset {
             pairs.append(("Solnedgang", timeFormatter.string(from: sunset)))
         }
@@ -96,7 +108,7 @@ struct UltronSolTile: View {
             let dateFormatter = DateFormatter()
             dateFormatter.locale = Locale(identifier: "da_DK")
             dateFormatter.dateFormat = "d. MMM"
-            pairs.append(("Næste helligdag",
+            pairs.append(("Helligdag",
                           "\(next.name) · \(dateFormatter.string(from: next.date))"))
         }
         return pairs
@@ -104,8 +116,6 @@ struct UltronSolTile: View {
 
     // MARK: - Solstice delta
 
-    /// Builds "Forår · +3m 42s" or "Vinter · −2m 10s" from today's daylight vs
-    /// the most recent solstice's daylight at the user's latitude.
     private func solsticeMetaText() -> String? {
         guard let today = weather?.daily.first,
               let todayDaylight = today.daylight,
@@ -131,18 +141,11 @@ struct UltronSolTile: View {
 
     // MARK: - Loading placeholder
 
-    /// Noted inside the view so the preview captures current time live.
-    private var loadingPlaceholderSpacer: some View { EmptyView() }
-
-    // Sun-arc chart — a dashed semicircle from sunrise to sunset, with
-    // a small accent dot marking the sun's current position along the
-    // daylight fraction. Lives as a private type at the bottom.
-
     private var loadingPlaceholder: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 RoundedRectangle(cornerRadius: 10).fill(UltronTheme.ink3)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 54, height: 54)
                 RoundedRectangle(cornerRadius: 4).fill(UltronTheme.ink3)
                     .frame(width: 140, height: 44)
             }
@@ -150,8 +153,7 @@ struct UltronSolTile: View {
                 .frame(height: 14)
                 .frame(maxWidth: 180)
             RoundedRectangle(cornerRadius: 4).fill(UltronTheme.ink3)
-                .frame(height: 14)
-                .frame(maxWidth: 220)
+                .frame(height: 82)
         }
         .redacted(reason: .placeholder)
     }
@@ -160,8 +162,9 @@ struct UltronSolTile: View {
 // MARK: - Sun arc chart
 
 /// Dashed semicircle from sunrise to sunset with the current sun
-/// position marked as an accent dot. Purely decorative — no labels,
-/// no ticks; the adjacent KV grid already surfaces the numbers.
+/// position marked as an accent dot. Now adds mono tick labels for
+/// sunrise / noon / sunset under the baseline so the arc reads on its
+/// own without the old separate KV row.
 private struct SunArcView: View {
     let sunrise: Date
     let sunset: Date
@@ -170,19 +173,19 @@ private struct SunArcView: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let padX: CGFloat = 8
+            let padX: CGFloat = 10
             let startX = padX
             let endX = w - padX
-            let baselineY = h - 4
-            let peakY: CGFloat = 6
+            let baselineY = h - 16         // leaves room for tick labels
+            let peakY: CGFloat = 8
 
             ZStack {
-                // The arc itself — a quadratic curve peaking above the midpoint.
+                // Arc.
                 Path { p in
                     p.move(to: CGPoint(x: startX, y: baselineY))
                     p.addQuadCurve(
                         to: CGPoint(x: endX, y: baselineY),
-                        control: CGPoint(x: (startX + endX) / 2, y: peakY - 20)
+                        control: CGPoint(x: (startX + endX) / 2, y: peakY - 26)
                     )
                 }
                 .stroke(
@@ -190,7 +193,7 @@ private struct SunArcView: View {
                     style: StrokeStyle(lineWidth: 1, dash: [3, 4])
                 )
 
-                // Faint ground line.
+                // Ground line.
                 Path { p in
                     p.move(to: CGPoint(x: startX, y: baselineY))
                     p.addLine(to: CGPoint(x: endX, y: baselineY))
@@ -200,13 +203,14 @@ private struct SunArcView: View {
                 // Sun position dot.
                 sunDot(width: w, height: h, startX: startX, endX: endX,
                        baselineY: baselineY, peakY: peakY)
+
+                // Tick labels (sunrise · noon · sunset).
+                tickLabels(width: w, height: h)
             }
         }
         .animation(.easeInOut(duration: 0.3), value: progress)
     }
 
-    /// 0…1 — fraction of daylight that has elapsed. Clamped so the
-    /// dot parks at the arc ends before sunrise / after sunset.
     private var progress: Double {
         let now = Date()
         let total = sunset.timeIntervalSince(sunrise)
@@ -220,11 +224,8 @@ private struct SunArcView: View {
                         startX: CGFloat, endX: CGFloat,
                         baselineY: CGFloat, peakY: CGFloat) -> some View {
         let t = progress
-        // Same quadratic as the Path above so the dot rides the arc.
         let x = startX + (endX - startX) * t
-        let controlY = peakY - 20
-        // B(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2 for quadratic Bézier,
-        // Y component only since we already computed X linearly.
+        let controlY = peakY - 26
         let u = 1 - t
         let y = u * u * baselineY
               + 2 * u * t * controlY
@@ -232,11 +233,37 @@ private struct SunArcView: View {
         let isDay = t > 0 && t < 1
         Circle()
             .fill(isDay ? UltronTheme.accent : UltronTheme.textFaint)
-            .frame(width: 9, height: 9)
+            .frame(width: 11, height: 11)
             .overlay(
                 Circle()
                     .stroke(UltronTheme.ink, lineWidth: 1)
             )
             .position(x: x, y: y)
+    }
+
+    private func tickLabels(width: CGFloat, height: CGFloat) -> some View {
+        let transit = Date(timeIntervalSince1970:
+            (sunrise.timeIntervalSince1970 + sunset.timeIntervalSince1970) / 2)
+        let df: DateFormatter = {
+            let d = DateFormatter()
+            d.locale = Locale(identifier: "da_DK")
+            d.dateFormat = "HH:mm"
+            return d
+        }()
+        return HStack(alignment: .center, spacing: 0) {
+            Text(df.string(from: sunrise))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(df.string(from: transit))
+                .frame(maxWidth: .infinity, alignment: .center)
+            Text(df.string(from: sunset))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .font(.custom(UltronTheme.FontName.monoRegular, size: 10))
+        .tracking(0.6)
+        .foregroundStyle(UltronTheme.textFaint)
+        .padding(.horizontal, 4)
+        .frame(height: 12)
+        .frame(maxWidth: .infinity, alignment: .bottom)
+        .offset(y: height / 2 - 6)
     }
 }
