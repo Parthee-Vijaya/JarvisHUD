@@ -16,8 +16,12 @@ struct UltronTopBar: View {
     var liveLabel: String = "Klar · ⌥ Space"
     var livePulsing: Bool = false
     var onHotkeySheet: () -> Void = {}
+    var onClose: () -> Void = {}
+    var onMinimize: () -> Void = {}
+    var onZoom: () -> Void = {}
 
     @State private var now = Date()
+    @State private var trafficHovering = false
     private let tick = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -48,10 +52,29 @@ struct UltronTopBar: View {
 
     private var trafficLights: some View {
         HStack(spacing: 8) {
-            Circle().fill(Color(hex: 0x7FBBE6)).frame(width: 12, height: 12)
-            Circle().fill(Color(hex: 0xE5C469)).frame(width: 12, height: 12)
-            Circle().fill(Color(hex: 0x7FCBAE)).frame(width: 12, height: 12)
+            trafficLight(colour: 0xFF5F57, glyph: "xmark",       action: onClose,    help: "Luk")
+            trafficLight(colour: 0xFEBC2E, glyph: "minus",       action: onMinimize, help: "Minimér")
+            trafficLight(colour: 0x28C840, glyph: "arrow.up.left.and.arrow.down.right",
+                         action: onZoom,     help: "Zoom")
         }
+        .onHover { trafficHovering = $0 }
+    }
+
+    private func trafficLight(colour: UInt32, glyph: String, action: @escaping () -> Void, help: String) -> some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color(hex: colour))
+                Image(systemName: glyph)
+                    .font(.system(size: 6.5, weight: .heavy))
+                    .foregroundStyle(Color.black.opacity(0.55))
+                    .opacity(trafficHovering ? 1 : 0)
+            }
+            .frame(width: 12, height: 12)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     private var wordmark: some View {

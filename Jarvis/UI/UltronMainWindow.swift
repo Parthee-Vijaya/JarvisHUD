@@ -15,7 +15,11 @@ struct UltronMainWindow: View {
     @Bindable var infoService: InfoModeService
     let audioLevel: AudioLevelMonitor
     let waveform: WaveformBuffer
+    let chatSession: ChatSession?
+    let onChatSend: (String) -> Void
     let onClose: () -> Void
+    let onMinimize: () -> Void
+    let onZoom: () -> Void
 
     @State private var activeTab: UltronTab = UltronMainWindow.restoreTab()
     @State private var showHotkeySheet: Bool = false
@@ -29,7 +33,10 @@ struct UltronMainWindow: View {
                     activeTab: $activeTab,
                     liveLabel: liveLabel,
                     livePulsing: activeTab == .voice,
-                    onHotkeySheet: { showHotkeySheet.toggle() }
+                    onHotkeySheet: { showHotkeySheet.toggle() },
+                    onClose: onClose,
+                    onMinimize: onMinimize,
+                    onZoom: onZoom
                 )
 
                 // Tab content — full-flex below the top bar
@@ -43,7 +50,10 @@ struct UltronMainWindow: View {
                             waveform: waveform
                         )
                     case .chat:
-                        UltronChatHost()
+                        UltronChatHost(
+                            session: chatSession,
+                            onSend: onChatSend
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -185,10 +195,13 @@ private struct UltronVoiceHost: View {
 }
 
 private struct UltronChatHost: View {
+    let session: ChatSession?
+    let onSend: (String) -> Void
+
     var body: some View {
         ZStack {
             UltronTheme.rootBackground.ignoresSafeArea()
-            UltronChatView()
+            UltronChatView(session: session, onSend: onSend)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -216,6 +216,11 @@ final class InfoModeService {
     /// render real-time values. Merges the returned fields into `systemInfo`
     /// so the slower `fetchBasics()` values (battery, RAM, hardware summary,
     /// etc.) aren't clobbered.
+    ///
+    /// Self-heal: if the initial `fetchBasics()` probe failed or hadn't
+    /// finished yet, `hardwareSummary` / `hostname` stay nil and the Ultron
+    /// System tile shows em-dashes forever. Re-probe here when either field
+    /// is still empty so the tile repopulates within one live-metrics tick.
     func refreshLiveMetrics() async {
         let live = await systemInfoService.fetchLiveMetrics()
         self.systemInfo.cpuLoadPercent = live.cpuLoadPercent
@@ -225,6 +230,23 @@ final class InfoModeService {
         self.systemInfo.wifiBytesSent = live.wifiBytesSent
         self.systemInfo.bluetoothPoweredOn = live.bluetoothPoweredOn
         self.systemInfo.bluetoothConnectedDevices = live.bluetoothConnectedDevices
+
+        if systemInfo.hardwareSummary == nil || systemInfo.hostname == nil {
+            let basics = await systemInfoService.fetchBasics()
+            // Merge only the slow-path fields — don't clobber the live
+            // values we just read above.
+            if systemInfo.hostname == nil         { systemInfo.hostname = basics.hostname }
+            if systemInfo.osVersion == nil        { systemInfo.osVersion = basics.osVersion }
+            if systemInfo.localIP == nil          { systemInfo.localIP = basics.localIP }
+            if systemInfo.ramTotalGB == nil       { systemInfo.ramTotalGB = basics.ramTotalGB }
+            if systemInfo.ramUsedGB == nil        { systemInfo.ramUsedGB = basics.ramUsedGB }
+            if systemInfo.dnsServers.isEmpty      { systemInfo.dnsServers = basics.dnsServers }
+            if systemInfo.hostinfo == nil         { systemInfo.hostinfo = basics.hostinfo }
+            if systemInfo.hardwareSummary == nil  { systemInfo.hardwareSummary = basics.hardwareSummary }
+            if systemInfo.wifi == nil             { systemInfo.wifi = basics.wifi }
+            if systemInfo.batteryPercent == nil   { systemInfo.batteryPercent = basics.batteryPercent }
+            if systemInfo.batteryState == nil     { systemInfo.batteryState = basics.batteryState }
+        }
     }
 
     private func loadClaudeTile() async {
