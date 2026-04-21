@@ -41,9 +41,14 @@ final class RSSParserTests: XCTestCase {
     }
 
     func testAllSourcesHaveValidURLs() {
+        // Post-S1 hardening: feedURL is optional. Every source must still
+        // produce a parseable https URL — if this fails, the corresponding
+        // feedURLString has been edited into something malformed.
         for source in NewsHeadline.Source.allCases {
-            XCTAssertEqual(source.feedURL.scheme, "https")
-            XCTAssertFalse(source.feedURL.absoluteString.isEmpty)
+            let url = source.feedURL
+            XCTAssertNotNil(url, "Source \(source.rawValue) has malformed feedURLString: \(source.feedURLString)")
+            XCTAssertEqual(url?.scheme, "https")
+            XCTAssertFalse(source.feedURLString.isEmpty)
         }
     }
 

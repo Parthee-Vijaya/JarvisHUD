@@ -26,11 +26,12 @@ final class LocationService: NSObject {
         }
     }
 
-    /// User's home address — used by Info mode's commute estimate. Free-form string,
-    /// gets geocoded on each Info refresh. Seeded to the owner's address on first run;
-    /// free-form override via Settings.
+    /// User's home address — hardcoded. The commute tile geocodes this
+    /// once and caches the result for the app's lifetime. Settings still
+    /// writes to UserDefaults so the text field mirrors the current
+    /// value, but the getter ignores it — any stale override is dropped.
     var homeAddress: String? {
-        get { UserDefaults.standard.string(forKey: Self.homeAddressKey) ?? Self.defaultHomeAddress }
+        get { Self.defaultHomeAddress }
         set {
             if let newValue, !newValue.isEmpty {
                 UserDefaults.standard.set(newValue, forKey: Self.homeAddressKey)

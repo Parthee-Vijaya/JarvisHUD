@@ -33,6 +33,11 @@ final class ChatCommandRouter {
     private let screenCapture: ScreenCaptureService
     private let summaryService: DocumentSummaryService
     private let chatSession: ChatSession
+    /// v1.4 Fase 3 (first slice): intercepts trivial queries (time, date, IP,
+    /// battery, WiFi, weather) and answers locally before the AI call.
+    /// Optional so older callers (hotkey-only codepaths) can still construct
+    /// the router without a full InfoModeService instance.
+    private let instantAnswers: InstantAnswerProvider?
 
     init(
         chatPipeline: ChatPipeline,
@@ -40,7 +45,8 @@ final class ChatCommandRouter {
         geminiClient: GeminiClient,
         screenCapture: ScreenCaptureService,
         summaryService: DocumentSummaryService,
-        chatSession: ChatSession
+        chatSession: ChatSession,
+        instantAnswers: InstantAnswerProvider? = nil
     ) {
         self.chatPipeline = chatPipeline
         self.agentChatPipeline = agentChatPipeline
@@ -48,6 +54,7 @@ final class ChatCommandRouter {
         self.screenCapture = screenCapture
         self.summaryService = summaryService
         self.chatSession = chatSession
+        self.instantAnswers = instantAnswers
     }
 
     // MARK: - Public
@@ -58,7 +65,15 @@ final class ChatCommandRouter {
     ///   - `.voice`     → ignored (mic capture starts elsewhere via RecordingPipeline)
     ///   - `.screenshot`→ user's optional question about the screen
     ///   - `.document`  → ignored (the file picker launches on trigger)
-    func run(mode: Mode, input: String) async {
+    func run(mode: Mode, input: String, image: Data? = nil) async {
+        // v1.4 Fase 2b.4: if an image is attached, always route through the
+        // Vision-style text+image path regardless of the mode's inputKind.
+        // Users attach images in chat mode expecting "describe this" style
+        // replies, not a hotkey-triggered Vision screenshot flow.
+        if let image {
+            await runTextWithImage(mode: mode, input: input, image: image)
+            return
+        }
         switch mode.inputKind {
         case .text:
             await runText(mode: mode, input: input)
@@ -73,10 +88,61 @@ final class ChatCommandRouter {
         }
     }
 
+    /// v1.4 Fase 2b.4: text + attached image via Gemini's text+image path.
+    /// Uses the same ChatSession streaming pattern so the answer shows up
+    /// in the normal message list and the user's bubble just carries the
+    /// prompt. Image is passed in-memory; we never persist it on disk.
+    private func runTextWithImage(mode: Mode, input: String, image: Data) async {
+        let prompt = input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Beskriv billedet."
+            : input
+        chatSession.addUserMessage(prompt)
+        let placeholderID = chatSession.addAssistantMessage("")
+        chatSession.isStreaming = true
+        chatSession.currentStep = ProcessingStep(.thinking(provider: "Gemini"))
+        defer {
+            chatSession.isStreaming = false
+            chatSession.currentStep = nil
+        }
+
+        let effectiveMode = mode.outputType == .chat ? mode : BuiltInModes.chat
+        let result = await geminiClient.sendTextWithImage(
+            prompt: prompt, mode: effectiveMode, imageData: image
+        )
+        switch result {
+        case .success(let text):
+            chatSession.updateAssistant(id: placeholderID, text: text)
+        case .failure(let error):
+            chatSession.markAssistantError(
+                id: placeholderID,
+                errorText: RouterError.geminiFailed(error).errorDescription ?? "AI-kald fejlede.",
+                sourceModeID: effectiveMode.id,
+                sourcePrompt: prompt
+            )
+        }
+    }
+
     // MARK: - Text (Chat / Q&A / Translate / Agent / custom text modes)
 
     private func runText(mode: Mode, input: String) async {
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        // v1.4 Fase 3 preflight: for plain chat / Q&A / default text modes,
+        // try the instant-answer provider before reaching for the network.
+        // Agent + VibeCode + Professional etc. intentionally skip this — the
+        // user wants *transformation*, not a lookup. Grounded Q&A benefits
+        // most (trivial factual query → 0 Gemini round-trip).
+        if let instantAnswers, mode.provider == .gemini, !mode.agentTools,
+           mode.outputType == .chat || mode.outputType == .hud,
+           let answer = await instantAnswers.match(query: input) {
+            LoggingService.shared.log("InstantAnswer hit for: \(input.prefix(60))")
+            chatSession.addUserMessage(input)
+            _ = chatSession.addAssistantMessage(answer)
+            await MetricsService.shared.record(
+                phase: .modelCall, durationMs: 0, mode: mode.name, transport: "instant-answer"
+            )
+            return
+        }
 
         if mode.provider == .anthropic, mode.agentTools,
            let agent = agentChatPipeline() {

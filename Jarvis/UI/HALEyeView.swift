@@ -49,7 +49,7 @@ struct HALEyeView: View {
                 )
                 .shadow(color: JarvisTheme.accent.opacity(0.75),
                         radius: 2 + CGFloat(intensity) * 6)
-                .animation(.easeOut(duration: 0.1), value: intensity)
+                .animation(JarvisTheme.springSnappy, value: intensity)
         }
         .frame(width: size, height: size)
         .onAppear {

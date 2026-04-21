@@ -1,4 +1,5 @@
 import AppKit
+import CoreSpotlight
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -42,6 +43,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// `handleChatVoiceToggle` push dictation transcripts back into the UI.
     private let chatInputBuffer = ChatInputBuffer()
     let locationService = LocationService()
+    /// v1.4: observes screen-lock / display-sleep so the HUD can suppress
+    /// auto-pop surfaces while the user is away. Instantiated once and kept
+    /// for the app's lifetime.
+    private let focusObserver = FocusModeObserver()
     lazy var updatesService = UpdatesService(locationService: locationService)
     lazy var infoModeService = InfoModeService(locationService: locationService)
     lazy var errorPresenter = ErrorPresenter(hudController: hudController)
@@ -105,14 +110,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setupVoiceCommands()
             setupMorningBriefing()
             checkFirstLaunch()
+            migrateClaudeBudgetLimits()
             // v1.1.7: spawn any MCP servers the user declared in ~/.jarvis/mcp.json
             // and register their tools with the shared agent registry. Runs in
             // the background — we don't block app launch if a server is slow.
             Task { await MCPRegistry.shared.bootstrap() }
+            // v1.4 Fase 4 slice: register ourselves as a services-menu
+            // provider so "Ask Jarvis about this" appears in every app's
+            // Services submenu for selected text. The Info.plist NSServices
+            // array advertises the action; this call tells AppKit we're
+            // ready to handle it.
+            NSApplication.shared.servicesProvider = self
+            NSUpdateDynamicServices()
             // v1.2.0: ping GitHub Releases once a day to see if a newer
             // Jarvis DMG is published. Non-blocking; prompts only when a
             // higher semver is found.
             updateChecker.checkIfDue()
+            // v2.0: pre-warm the Cockpit data sources in the background so
+            // the first time the user opens Ultron the tiles already have
+            // live commute + weather + charger data. The refresh runs off
+            // the main actor via the service's internal Task; this call
+            // just kicks it off. Subsequent opens hit the 2-minute cache.
+            Task { await infoModeService.refresh() }
             LoggingService.shared.log("Jarvis v\(Constants.appVersion) started")
         }
     }
@@ -120,6 +139,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             MCPRegistry.shared.shutdown()
+        }
+    }
+
+    // MARK: - Services menu (v1.4 Fase 4 slice)
+
+    /// Called by AppKit when the user picks "Ask Jarvis about this" from any
+    /// app's Services submenu. The `NSMessage` key in Info.plist maps this
+    /// selector; pasteboard contains the selected plain text.
+    ///
+    /// Behaviour: pull the text, route it through the chat as a Q&A-mode
+    /// prompt, and show the HUD. Matches the `open jarvis://qna?prompt=…`
+    /// URL scheme flow so the handling is unified.
+    @objc func askJarvisAboutSelection(_ pboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+        guard let text = pboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            LoggingService.shared.log("Services: empty pasteboard — nothing to ask", level: .warning)
+            return
+        }
+        LoggingService.shared.log("Services: ask Jarvis about \(text.count)-char selection")
+        // Reuse the same chat-opening path the ⌥C hotkey uses. Route through
+        // the chat command router in Q&A mode so web-search grounds the reply.
+        Task { @MainActor in
+            hudController.showChat()
+            await commandRouter?.run(mode: BuiltInModes.qna, input: text)
         }
     }
 
@@ -161,13 +204,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let router = commandRouter {
                 Task { await router.run(mode: BuiltInModes.vision, input: prompt) }
             }
+        case "dictate-clipboard":
+            // Fire-and-forget URL entry. AppIntent callers invoke
+            // `dictateToClipboard(seconds:)` directly so they can await
+            // the transcript; the URL scheme just kicks off the flow
+            // with HUD feedback.
+            Task { _ = await dictateToClipboard(seconds: 6) }
         case "info", "cockpit":
             hudController.showInfoMode()
         case "briefing", "uptodate":
             hudController.showUptodate()
+        case "conversation":
+            // Spotlight hit or explicit jarvis://conversation?id=UUID —
+            // open the chat window and load the requested transcript.
+            guard let idString = components?.queryItems?.first(where: { $0.name == "id" })?.value,
+                  let uuid = UUID(uuidString: idString) else {
+                LoggingService.shared.log("jarvis://conversation missing id", level: .warning)
+                return
+            }
+            refreshConversationHistory()
+            hudController.showChat()
+            loadConversationIntoChat(id: uuid)
         default:
             LoggingService.shared.log("Unknown jarvis:// action: \(action)", level: .warning)
         }
+    }
+
+    /// Spotlight taps arrive as an `NSUserActivity` of type
+    /// `CSSearchableItemActionType`, not as a `jarvis://` URL — AppKit
+    /// routes them here. Pull the conversation UUID out of the activity
+    /// userInfo (`CSSearchableItemActivityIdentifier`) and open the chat.
+    nonisolated func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                                 restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType,
+              let idString = userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+              let uuid = UUID(uuidString: idString) else {
+            return false
+        }
+        MainActor.assumeIsolated {
+            refreshConversationHistory()
+            hudController.showChat()
+            loadConversationIntoChat(id: uuid)
+        }
+        return true
     }
 
     // MARK: - Pipeline Setup
@@ -181,9 +260,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // isn't interrupted by a permission prompt.
         Task { await hudController.speechService.requestAuthorization() }
 
+        // v1.4 Fase 2c: always ask for location on startup so Cockpit's
+        // weather / commute / sun tiles have fresh GPS-driven data without
+        // waiting for the user to open Info mode. No-op after the first
+        // grant (macOS dedupes repeat authorization requests).
+        locationService.requestAuthorization()
+        Task { _ = await locationService.refresh() }
+
         // Wire the Uptodate + Info panel data sources.
         hudController.updatesService = updatesService
         hudController.infoModeService = infoModeService
+        hudController.usageTracker = usageTracker
 
         pipeline = RecordingPipeline(
             audioCapture: audioCapture,
@@ -243,11 +330,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             geminiClient: geminiClient,
             screenCapture: screenCapture,
             summaryService: summaryService,
-            chatSession: chatSession
+            chatSession: chatSession,
+            instantAnswers: InstantAnswerProvider(infoModeService: infoModeService)
         )
         commandRouter = router
         hudController.commandRouter = router
-        hudController.availableModes = modeManager.allModes
         hudController.shortcutLookup = { [weak self] mode in
             guard let self else { return nil }
             return self.shortcutStringFor(mode: mode)
@@ -257,8 +344,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hudController.inputBuffer = chatInputBuffer
         hudController.permissionsManager = permissions
-        hudController.hasGeminiKey = keychainService.hasAPIKey
-        hudController.hasAnthropicKey = keychainService.getAnthropicKey() != nil
         hudController.onOpenSettings = { [weak self] in
             self?.openSettings()
         }
@@ -363,6 +448,112 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 LoggingService.shared.log("Chat dictation start failed: \(error)", level: .warning)
             }
+        }
+    }
+
+    // MARK: - AppIntents helpers (v1.2.2)
+    //
+    // The three methods below back the Siri/Shortcuts intents in
+    // `JarvisAppIntents.swift`. Kept on AppDelegate (rather than free
+    // functions) so they share the same `geminiClient`, `audioCapture`,
+    // and `hudController` instances as the hotkey-driven paths — no
+    // second set of services to keep in sync.
+
+    /// Push-to-talk for a fixed `seconds` window, transcribe via Gemini,
+    /// copy the result to the system pasteboard. Returns the trimmed
+    /// transcript (empty string on mic denial or Gemini failure).
+    @MainActor
+    func dictateToClipboard(seconds: TimeInterval = 6) async -> String {
+        guard permissions.checkMicrophone() else {
+            hudController.showError("Mikrofon-tilladelse mangler")
+            return ""
+        }
+        hudController.activeModeName = "Dictation → Clipboard"
+        hudController.showRecording()
+        do {
+            try audioCapture.startRecording()
+        } catch {
+            hudController.showError("Mic fejl: \(error.localizedDescription)")
+            return ""
+        }
+        try? await Task.sleep(for: .seconds(seconds))
+        let audioData = audioCapture.stopRecording()
+        hudController.showProcessing()
+        guard !audioData.isEmpty else {
+            hudController.close()
+            return ""
+        }
+        let result = await geminiClient.sendAudio(audioData, mode: BuiltInModes.dictation)
+        switch result {
+        case .success(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(trimmed, forType: .string)
+            hudController.showConfirmation("Kopieret til udklipsholder")
+            return trimmed
+        case .failure(let error):
+            hudController.showError("Transkription fejlede: \(error.localizedDescription)")
+            return ""
+        }
+    }
+
+    /// Fetch a URL, strip tags/scripts/styles, cap at 8 KB of readable text,
+    /// then ask Gemini for a 3-bullet summary. Throws on fetch/decode/API
+    /// failure so Shortcut error branches can handle it.
+    @MainActor
+    func summarizeURL(_ url: URL) async throws -> String {
+        let (data, _) = try await URLSession.shared.data(from: url)
+        guard let raw = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .isoLatin1) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        let stripped = raw
+            .replacingOccurrences(
+                of: "<script[^>]*>[\\s\\S]*?</script>",
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "<style[^>]*>[\\s\\S]*?</style>",
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let truncated = String(stripped.prefix(8_000))
+        let prompt = """
+        Opsummer indholdet nedenfor i præcis 3 korte bullet points \
+        (hver under 20 ord). Svar på samme sprog som teksten.
+
+        Indhold:
+        \(truncated)
+        """
+        let result = await geminiClient.sendText(prompt: prompt, mode: BuiltInModes.summarize)
+        switch result {
+        case .success(let text): return text
+        case .failure(let error): throw error
+        }
+    }
+
+    /// Combine selected text + a question into a single prompt, send to
+    /// Gemini chat mode, return the reply as one string. Bypasses
+    /// ChatPipeline because Shortcuts wants a synchronous value — no
+    /// streaming surface needed here.
+    @MainActor
+    func askWithContext(selectedText: String, question: String) async throws -> String {
+        let prompt = """
+        Context:
+
+        \(selectedText)
+
+        Question: \(question)
+        """
+        let result = await geminiClient.sendText(prompt: prompt, mode: BuiltInModes.chat)
+        switch result {
+        case .success(let text): return text
+        case .failure(let error): throw error
         }
     }
 
@@ -929,6 +1120,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !hasLaunched {
             UserDefaults.standard.set(true, forKey: Constants.Defaults.hasLaunchedBefore)
             showOnboarding()
+        }
+    }
+
+    /// v1.4: Claude Code budget defaults jumped from 1 M / 5 M tokens to
+    /// 500 M / 2.5 B because cache-read is the dominant category and the
+    /// old numbers put the Cockpit bars at >90000% for a normal week. If
+    /// the stored value is still at the pre-bump tier, rewrite it to the
+    /// new default. Users who deliberately set a higher number keep theirs.
+    private func migrateClaudeBudgetLimits() {
+        let d = UserDefaults.standard
+        let dailyKey = Constants.Defaults.claudeDailyLimitTokens
+        let weeklyKey = Constants.Defaults.claudeWeeklyLimitTokens
+        let storedDaily = d.integer(forKey: dailyKey)
+        if storedDaily > 0, storedDaily < 10_000_000 {
+            d.set(Constants.ClaudeStats.defaultDailyLimit, forKey: dailyKey)
+        }
+        let storedWeekly = d.integer(forKey: weeklyKey)
+        if storedWeekly > 0, storedWeekly < 50_000_000 {
+            d.set(Constants.ClaudeStats.defaultWeeklyLimit, forKey: weeklyKey)
         }
     }
 

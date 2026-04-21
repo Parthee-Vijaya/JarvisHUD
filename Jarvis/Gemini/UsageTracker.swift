@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 
+@MainActor
 @Observable
 class UsageTracker {
     struct MonthlyUsage: Codable {
@@ -19,6 +20,50 @@ class UsageTracker {
 
     var currentUsage: MonthlyUsage
     var onCostWarning: ((Double) -> Void)?
+
+    // MARK: - Live per-turn stats (for Ultron Chat / Voice HUD)
+
+    /// Pretty name of the model used on the most-recent completed turn
+    /// (e.g. "gemini-2.5-flash", "claude-sonnet-4-6"). Nil if no turn
+    /// has completed in this session yet.
+    var lastModelName: String?
+    var lastInputTokens: Int = 0
+    var lastOutputTokens: Int = 0
+    /// Wall-clock duration between `beginTurn()` and the latest
+    /// `trackUsage` call, in milliseconds. Zero if no turn has started.
+    var lastLatencyMs: Int = 0
+    /// Timestamp of the latest completed turn — callers use it to
+    /// render "for 12s siden" in the Chat / Voice header.
+    var lastTurnAt: Date?
+    /// True between `beginTurn()` and `trackUsage`; Ultron HUDs can
+    /// render a pulsing indicator while a request is in flight.
+    var isTurnInFlight: Bool = false
+
+    private var turnStart: Date?
+
+    /// Stamps the start of a model round-trip. Called from the client
+    /// right before the HTTP request / SSE stream opens so the latency
+    /// is real wall-clock time (network + server + decode).
+    func beginTurn() {
+        turnStart = Date()
+        isTurnInFlight = true
+    }
+
+    /// Record per-turn stats with the display-friendly model name.
+    /// Call this even when `inputTokens`/`outputTokens` are already
+    /// routed through `trackUsage(model:...)` so the Ultron HUDs see
+    /// the Gemini AND Anthropic paths.
+    func recordTurn(modelName: String, inputTokens: Int, outputTokens: Int) {
+        lastModelName = modelName
+        lastInputTokens = inputTokens
+        lastOutputTokens = outputTokens
+        if let start = turnStart {
+            lastLatencyMs = Int(Date().timeIntervalSince(start) * 1000)
+        }
+        lastTurnAt = Date()
+        isTurnInFlight = false
+        turnStart = nil
+    }
 
     var formattedUsage: String {
         "Usage: $\(String(format: "%.2f", currentUsage.totalCostUSD)) this month"

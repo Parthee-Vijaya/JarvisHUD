@@ -11,6 +11,11 @@ struct MessageBubble: View {
     /// v1.1.5: optional retry callback rendered when `message.lastError` is
     /// set. Nil means retry is unavailable (legacy ChatView path).
     var onRetry: ((ChatMessage) -> Void)? = nil
+    /// v1.4 (Fase 2b): when true, a pulsing ▌ caret renders below the
+    /// rendered markdown so the user has an obvious "still typing…" cue.
+    /// Only pass true for the single message currently being streamed by
+    /// ChatSession (typically the trailing assistant message).
+    var isStreaming: Bool = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -23,6 +28,7 @@ struct MessageBubble: View {
                 Spacer(minLength: 0)
             }
         }
+        .dynamicTypeSize(.xSmall ... .accessibility2)
     }
 
     private var userBubble: some View {
@@ -51,10 +57,13 @@ struct MessageBubble: View {
     private var assistantBody: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(Constants.displayName)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(JarvisTheme.textSecondary)
             MarkdownTextView(message.text, foregroundColor: JarvisTheme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if isStreaming {
+                StreamingCursor()
+            }
             if message.lastError != nil, let onRetry {
                 retryPill(onRetry)
             }
@@ -67,7 +76,7 @@ struct MessageBubble: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 10, weight: .semibold))
                 Text("Prøv igen")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption2.weight(.medium))
             }
             .foregroundStyle(JarvisTheme.accent)
             .padding(.horizontal, 10)
@@ -81,5 +90,29 @@ struct MessageBubble: View {
         .buttonStyle(.plain)
         .padding(.top, 2)
         .help("Gentag samme prompt")
+    }
+}
+
+// MARK: - Streaming cursor (v1.4 Fase 2b.1)
+
+/// Thin pulsing block caret rendered below an assistant message while it's
+/// mid-stream. Uses a repeating opacity animation — no timers, no tasks;
+/// SwiftUI drives the pulse and stops it for free when the parent removes
+/// this view after streaming ends.
+private struct StreamingCursor: View {
+    @State private var dim = false
+
+    var body: some View {
+        Text("▌")
+            .font(.footnote.monospaced())
+            .foregroundStyle(JarvisTheme.accent)
+            .opacity(dim ? 0.25 : 1.0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) {
+                    dim = true
+                }
+            }
+            .accessibilityLabel("Jarvis skriver")
+            .accessibilityHidden(false)
     }
 }

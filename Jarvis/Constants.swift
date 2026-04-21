@@ -6,7 +6,7 @@ enum Constants {
     /// breaking Keychain-service IDs and log paths.
     static let displayName = "J.A.R.V.I.S"
     static let appName = "Jarvis"
-    static let appVersion = "1.2.0-alpha.1"
+    static let appVersion = "2.0.0"
     static let bundleID = "pavi.Jarvis"
 
     // MARK: - Spacing scale (use these instead of magic numbers)
@@ -111,50 +111,24 @@ enum Constants {
         /// v1.1.7: newline-separated list of additional program names the user
         /// trusts for `run_shell` beyond the built-in defaults.
         static let shellCommandWhitelist = "shellCommandWhitelist"
-
-        // MARK: Jarvis voice-assistant layer (v1.3.0)
-        /// What happens when the Porcupine wake-word fires.
-        /// Stored as `WakeWordAction.rawValue` — see `WakeWordAction` enum.
-        static let wakeWordAction = "wakeWordAction"
-        /// Silence length (seconds) before VAD auto-stops a wake-word recording.
-        static let vadSilenceThreshold = "vadSilenceThreshold"
-        /// Toggle for bidirectional Gemini Live Audio sessions. Off by default —
-        /// Live-audio models cost more than standard Flash.
-        static let liveVoiceEnabled = "liveVoiceEnabled"
-        /// Gemini Live model to use when liveVoiceEnabled is on.
-        static let liveVoiceModel = "liveVoiceModel"
-        /// Prepend a persistent persona preamble + remembered facts to Chat/Q&A
-        /// system prompts so Jarvis answers in character and "remembers" you.
-        static let personaEnabled = "personaEnabled"
-        /// Human name the persona uses to address the user (default: "Sir").
-        static let personaAddress = "personaAddress"
-        /// Whether stored facts in `memory.json` are injected into the prompt.
-        static let memoryInjectionEnabled = "memoryInjectionEnabled"
-        /// Proactive morning briefing scheduler.
-        static let morningBriefingEnabled = "morningBriefingEnabled"
-        /// "HH:mm" 24-hour clock string, default "07:30".
-        static let morningBriefingTime = "morningBriefingTime"
-        /// ISO-date string of the last briefing run, so we don't double-fire.
-        static let morningBriefingLastRun = "morningBriefingLastRun"
-    }
-
-    // MARK: - Live voice
-    enum LiveVoice {
-        /// Default Gemini Live audio model. User-overridable via Settings.
-        /// Exposed as a constant so the WebSocket connector, UI picker and
-        /// logs all reference the same string.
-        static let defaultModel = "gemini-2.5-flash-preview-native-audio-dialog"
-        /// Sample rate Gemini expects for PCM16 uplink and downlink.
-        static let sampleRate: Int = 16_000
+        /// v1.4: when true (default) HUDWindowController suppresses auto-pop
+        /// surfaces (showResult/showError/showConfirmation/showPermissionError)
+        /// while the system reports itself as quiet (screen locked or display
+        /// asleep). Push-to-talk + user-opened panels always bypass this.
+        static let respectFocusMode = "respectFocusMode"
     }
 
     // MARK: - Claude Code defaults
     enum ClaudeStats {
-        /// Default daily budget shown in the Info panel when the user hasn't set one.
-        /// 1 M tokens is a rough placeholder for "an intense day".
-        static let defaultDailyLimit = 1_000_000
-        /// Default weekly budget. Free/Pro users can override in Settings.
-        static let defaultWeeklyLimit = 5_000_000
+        /// Default daily budget shown in the Info panel when the user hasn't
+        /// set one. Cache-read tokens dominate on agent-heavy days — 500 M
+        /// tokens/day is a defensible "hard working" baseline. Users on the
+        /// Claude Pro / Max / Team plans can bump this in Settings.
+        static let defaultDailyLimit = 500_000_000
+        /// Default weekly budget — 5 × daily. Anything above "week in the
+        /// weeds" territory lands over the 100% mark, which the bar clamps
+        /// to full + the text shows ">999%" instead of an alarming raw number.
+        static let defaultWeeklyLimit = 2_500_000_000
     }
 
 

@@ -24,19 +24,45 @@ fi
 
 if [[ "${1:-}" != "--no-build" ]]; then
     echo "▶ building Debug…"
-    xcodebuild -project "$PROJECT" \
-        -scheme "$SCHEME" \
-        -configuration Debug \
-        -derivedDataPath "$BUILD_DIR" \
-        CODE_SIGN_IDENTITY="-" \
-        CODE_SIGNING_REQUIRED=NO \
-        CODE_SIGNING_ALLOWED=NO \
-        build 2>&1 | grep -E "(error:|warning:|BUILD SUCCEEDED|BUILD FAILED)" | head -30
+
+    # Prefer the persistent "Jarvis Dev" self-signed identity when it
+    # exists — makes macOS Keychain ACLs ("Always Allow" for Gemini key)
+    # survive rebuilds. Run `./create-dev-signing-cert.sh` once to
+    # install it. Without the cert, we fall back to Xcode's automatic
+    # signing (required by Widget Extension App Groups).
+    BUILD_ARGS=(
+        -project "$PROJECT"
+        -scheme "$SCHEME"
+        -configuration Debug
+        -derivedDataPath "$BUILD_DIR"
+    )
+    DEV_IDENTITY="Jarvis Dev"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_IDENTITY"; then
+        echo "▶ using persistent code-signing identity '$DEV_IDENTITY'"
+        BUILD_ARGS+=(
+            CODE_SIGN_STYLE=Manual
+            CODE_SIGN_IDENTITY="$DEV_IDENTITY"
+            DEVELOPMENT_TEAM=""
+        )
+    else
+        echo "▶ '$DEV_IDENTITY' not found — using Xcode automatic signing"
+        echo "  (tip: run ./create-dev-signing-cert.sh once to avoid Keychain re-prompts)"
+    fi
+
+    xcodebuild "${BUILD_ARGS[@]}" build 2>&1 \
+        | grep -E "(error:|warning:|BUILD SUCCEEDED|BUILD FAILED)" | head -30
 fi
 
 if [[ ! -d "$APP_PATH" ]]; then
     echo "✗ build output missing at $APP_PATH"
     exit 1
+fi
+
+# Verify the signature actually bound the Info.plist — if not, TCC churn would
+# return and we'd regret shipping the fix. `codesign -dv` surfaces `Info.plist=…`
+# (the hash) on a bound binary and `Info.plist=not bound` on a broken one.
+if codesign -dv "$APP_PATH" 2>&1 | grep -q "Info.plist=not bound"; then
+    echo "⚠  codesign didn't bind Info.plist — TCC will still churn. Check CODE_SIGNING_ALLOWED."
 fi
 
 echo "▶ launching $APP_PATH"

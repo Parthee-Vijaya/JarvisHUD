@@ -146,7 +146,7 @@ enum CommuteError: LocalizedError {
     }
 }
 
-final class CommuteService {
+actor CommuteService {
     /// Tesla Model 3 Long Range AWD 2025 — mixed real-world consumption baseline.
     /// EPA rates it at roughly 4.0 mi/kWh (155 Wh/km); real-world mixed driving
     /// tends to be 170–200 Wh/km depending on temperature and speed. 180 Wh/km is
@@ -154,18 +154,39 @@ final class CommuteService {
     /// future refinement (log them here, then add a settings toggle).
     static let teslaModel3AWD2025Efficiency: Double = 0.180  // kWh per km
 
+    /// Address → geocoded destination cache. `CLGeocoder` round-trips take
+    /// 1-3 seconds each and the home address doesn't change between
+    /// refreshes — memoising it trims that wait off every Cockpit reload.
+    /// Evicted only when the app restarts.
+    private struct CachedGeocode {
+        let coordinate: CLLocationCoordinate2D
+        let locality: String
+    }
+    private var geocodeCache: [String: CachedGeocode] = [:]
+
     func estimate(from origin: CLLocationCoordinate2D, originLabel: String, toAddress address: String) async throws -> CommuteEstimate {
-        // 1) Geocode the home address → coordinate.
-        let placemarks: [CLPlacemark]
-        do {
-            placemarks = try await CLGeocoder().geocodeAddressString(address)
-        } catch {
-            throw CommuteError.geocodeFailed(address)
+        // 1) Geocode the home address → coordinate (cache per address so
+        //    repeated refreshes skip the 1-3s CLGeocoder round-trip).
+        let destination: CLLocationCoordinate2D
+        let toLabel: String
+        if let cached = geocodeCache[address] {
+            destination = cached.coordinate
+            toLabel = cached.locality
+        } else {
+            let placemarks: [CLPlacemark]
+            do {
+                placemarks = try await CLGeocoder().geocodeAddressString(address)
+            } catch {
+                throw CommuteError.geocodeFailed(address)
+            }
+            guard let pm = placemarks.first, let coord = pm.location?.coordinate else {
+                throw CommuteError.geocodeFailed(address)
+            }
+            let label = pm.locality ?? pm.name ?? address
+            geocodeCache[address] = CachedGeocode(coordinate: coord, locality: label)
+            destination = coord
+            toLabel = label
         }
-        guard let destination = placemarks.first?.location?.coordinate else {
-            throw CommuteError.geocodeFailed(address)
-        }
-        let toLabel = placemarks.first?.locality ?? placemarks.first?.name ?? address
 
         // 2) Fire two route requests in parallel: one for "now" (traffic-aware)
         //    and one for the next off-peak slot as a free-flow baseline. The

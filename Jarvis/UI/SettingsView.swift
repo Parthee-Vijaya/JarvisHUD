@@ -3,7 +3,7 @@ import SwiftUI
 /// Sidebar items for the Settings window. Exposed so `AppDelegate` can deep-link
 /// into a specific pane via menu-bar items.
 enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case apiKey, hud, modes, hotkeys, location, voice, jarvis, claude, agent, history, usage, about
+    case apiKey, hud, modes, hotkeys, location, voice, claude, agent, mcp, history, usage, about
 
     var id: Self { self }
 
@@ -18,6 +18,7 @@ enum SettingsTab: Hashable, CaseIterable, Identifiable {
         case .jarvis:   return "Jarvis"
         case .claude:   return "Claude Code"
         case .agent:    return "Agent"
+        case .mcp:      return "MCP-servere"
         case .history:  return "Samtaler"
         case .usage:    return "Forbrug"
         case .about:    return "Om"
@@ -35,6 +36,7 @@ enum SettingsTab: Hashable, CaseIterable, Identifiable {
         case .jarvis:   return "brain.head.profile"
         case .claude:   return "sparkles"
         case .agent:    return "wand.and.stars"
+        case .mcp:      return "server.rack"
         case .history:  return "clock.arrow.circlepath"
         case .usage:    return "chart.bar.fill"
         case .about:    return "info.circle"
@@ -92,6 +94,8 @@ struct SettingsView: View {
             SettingsClaudePane()
         case .agent:
             SettingsAgentPane()
+        case .mcp:
+            SettingsMCPPane()
         case .history:
             SettingsHistoryPane()
         case .usage:
@@ -314,6 +318,7 @@ struct SettingsAPIKeysPane: View {
 
 struct SettingsHUDPane: View {
     @AppStorage("ttsEnabled") private var ttsEnabled = false
+    @AppStorage(Constants.Defaults.respectFocusMode) private var respectFocusMode: Bool = true
 
     var body: some View {
         SettingsPane(
@@ -323,6 +328,12 @@ struct SettingsHUDPane: View {
             SettingsCard(title: "Tale") {
                 Toggle("Læs HUD-svar op (Text-to-Speech)", isOn: $ttsEnabled)
                 Text("Når aktiveret læser Jarvis Q&A- og Vision-svar op med systemets stemmesyntese.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            SettingsCard(title: "Fokus") {
+                Toggle("Respekter Focus Mode / skærm-lås", isOn: $respectFocusMode)
+                Text("Auto-pop HUD er stille mens skærmen er låst eller sovende.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -618,37 +629,17 @@ struct SettingsVoicePane: View {
             }
 
             SettingsCard(
-                title: "Gemini Live Audio",
-                footer: "Bidirektionel stemme via Gemini's WebSocket-API. Jarvis svarer med rigtig syntetisk stemme i stedet for macOS-TTS. OBS: Live-modellen er dyrere end Flash — hold slået fra hvis du vil holde forbruget nede."
+                title: "Offline STT (WhisperKit)",
+                footer: "Modellen på 632 MB hentes én gang og caches lokalt. Jarvis bruger den som standard for dikterings-modes, så dine stemmeoptagelser aldrig forlader maskinen."
             ) {
-                Toggle("Aktivér Live Voice", isOn: $liveVoiceEnabled)
-                    .onChange(of: liveVoiceEnabled) { _, _ in
-                        NotificationCenter.default.post(name: .jarvisLiveVoiceSettingsChanged, object: nil)
-                    }
-
-                LabeledContent("Model") {
-                    TextField(Constants.LiveVoice.defaultModel, text: $liveVoiceModel)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(!liveVoiceEnabled)
-                }
-
-                Text("Aktivér wake-word-action 'Live-samtale' ovenfor for at starte en session med \"Jarvis\".")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            SettingsCard(
-                title: "Auto-stop (VAD)",
-                footer: "Wake-word-optagelser stoppes automatisk når du holder pause. Højere værdi = mindre følsom (bedre i støjende rum)."
-            ) {
+                whisperStatusRow
                 HStack {
-                    Text("Stilhedstærskel")
-                    Slider(value: $vadSilenceThreshold, in: 0.002...0.08) {
-                        Text("Stilhedstærskel")
+                    Button("Forhåndsindlæs nu") {
+                        triggerPreload()
                     }
-                    Text(String(format: "%.3f", vadSilenceThreshold))
-                        .font(.caption.monospacedDigit())
-                        .frame(width: 52, alignment: .trailing)
-                        .foregroundStyle(.secondary)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isWhisperBusy)
+                    Spacer()
                 }
             }
         }
@@ -659,6 +650,83 @@ struct SettingsVoicePane: View {
             if vadSilenceThreshold <= 0 { vadSilenceThreshold = 0.012 }
         }
     }
+
+    // MARK: - WhisperKit status helpers
+
+    @ViewBuilder
+    private var whisperStatusRow: some View {
+        #if canImport(WhisperKit)
+        let state = WhisperKitTranscriber.preloadState
+        HStack(spacing: Constants.Spacing.sm) {
+            Image(systemName: whisperIcon(for: state.phase))
+                .foregroundStyle(whisperTint(for: state.phase))
+            Text(whisperLabel(for: state.phase, progress: state.progress))
+                .font(.callout)
+                .foregroundStyle(.primary)
+            Spacer()
+        }
+        #else
+        HStack(spacing: Constants.Spacing.sm) {
+            Image(systemName: "xmark.circle").foregroundStyle(.secondary)
+            Text("WhisperKit-pakken er ikke wired up i dette build").font(.callout).foregroundStyle(.secondary)
+            Spacer()
+        }
+        #endif
+    }
+
+    #if canImport(WhisperKit)
+    private var isWhisperBusy: Bool {
+        switch WhisperKitTranscriber.preloadState.phase {
+        case .downloading, .warming: return true
+        default: return false
+        }
+    }
+
+    private func whisperIcon(for phase: WhisperPreloadState.Phase) -> String {
+        switch phase {
+        case .idle:         return "circle"
+        case .downloading:  return "arrow.down.circle"
+        case .warming:      return "flame"
+        case .ready:        return "checkmark.circle.fill"
+        case .failed:       return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func whisperTint(for phase: WhisperPreloadState.Phase) -> Color {
+        switch phase {
+        case .ready:  return .green
+        case .failed: return .red
+        default:      return .secondary
+        }
+    }
+
+    private func whisperLabel(for phase: WhisperPreloadState.Phase, progress: Double) -> String {
+        switch phase {
+        case .idle:                 return "Ikke forhåndsindlæst — vent til første optagelse eller tryk \"Forhåndsindlæs nu\""
+        case .downloading:          return String(format: "Henter model… %d%%", Int(progress * 100))
+        case .warming:              return "Varmer model…"
+        case .ready:                return "Klar (632 MB cached)"
+        case .failed(let msg):      return "Fejlede: \(msg)"
+        }
+    }
+
+    private func triggerPreload() {
+        // Dispatch onto a detached task so the button press returns immediately.
+        // The shared transcriber's `preload()` is idempotent: if already loaded,
+        // it returns instantly and the UI just flips to `.ready`.
+        Task.detached(priority: .userInitiated) {
+            do {
+                let transcriber = WhisperKitTranscriber()
+                try await transcriber.preload()
+            } catch {
+                LoggingService.shared.log("Manual WhisperKit preload failed: \(error)", level: .error)
+            }
+        }
+    }
+    #else
+    private var isWhisperBusy: Bool { true }
+    private func triggerPreload() {}
+    #endif
 }
 
 // MARK: - Claude Code pane
