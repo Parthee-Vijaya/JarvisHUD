@@ -3,7 +3,7 @@ import SwiftUI
 /// Sidebar items for the Settings window. Exposed so `AppDelegate` can deep-link
 /// into a specific pane via menu-bar items.
 enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case apiKey, hud, modes, hotkeys, location, voice, claude, agent, history, usage, about
+    case apiKey, hud, modes, hotkeys, location, voice, jarvis, claude, agent, history, usage, about
 
     var id: Self { self }
 
@@ -15,6 +15,7 @@ enum SettingsTab: Hashable, CaseIterable, Identifiable {
         case .hotkeys:  return "Hotkeys"
         case .location: return "Lokation"
         case .voice:    return "Stemme"
+        case .jarvis:   return "Jarvis"
         case .claude:   return "Claude Code"
         case .agent:    return "Agent"
         case .history:  return "Samtaler"
@@ -31,6 +32,7 @@ enum SettingsTab: Hashable, CaseIterable, Identifiable {
         case .hotkeys:  return "command.square"
         case .location: return "location.fill"
         case .voice:    return "mic.and.signal.meter.fill"
+        case .jarvis:   return "brain.head.profile"
         case .claude:   return "sparkles"
         case .agent:    return "wand.and.stars"
         case .history:  return "clock.arrow.circlepath"
@@ -84,6 +86,8 @@ struct SettingsView: View {
             SettingsLocationPane()
         case .voice:
             SettingsVoicePane()
+        case .jarvis:
+            SettingsJarvisPane()
         case .claude:
             SettingsClaudePane()
         case .agent:
@@ -531,6 +535,10 @@ struct SettingsLocationPane: View {
 struct SettingsVoicePane: View {
     @AppStorage(Constants.Defaults.wakeWordEnabled) private var wakeWordEnabled = false
     @AppStorage(Constants.Defaults.voiceCommandsEnabled) private var voiceCommandsEnabled = false
+    @AppStorage(Constants.Defaults.wakeWordAction) private var wakeWordActionRaw = WakeWordAction.qna.rawValue
+    @AppStorage(Constants.Defaults.liveVoiceEnabled) private var liveVoiceEnabled = false
+    @AppStorage(Constants.Defaults.liveVoiceModel) private var liveVoiceModel = Constants.LiveVoice.defaultModel
+    @AppStorage(Constants.Defaults.vadSilenceThreshold) private var vadSilenceThreshold: Double = 0.012
     @State private var porcupineKey = ""
     @State private var wakeWordStatus: String?
     private let keychainService = KeychainService()
@@ -554,12 +562,32 @@ struct SettingsVoicePane: View {
 
             SettingsCard(
                 title: "Wake word (Porcupine)",
-                footer: "Lavere strømforbrug end voice commands ovenfor, men mindre fleksibelt — \"Jarvis\" alene starter bare Q&A. Aktiveres fuldt i β med SPM-pakken."
+                footer: "\"Jarvis\" lyttes efter lokalt — lyd forlader aldrig din Mac. Kræver Porcupine SPM-pakken tilføjet i Xcode (se `PorcupineWakeWordDetector.swift`) og en gratis Picovoice AccessKey."
             ) {
                 Toggle("Aktivér 'Jarvis' wake word", isOn: $wakeWordEnabled)
                     .onChange(of: wakeWordEnabled) { _, _ in
                         NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
                     }
+
+                Divider()
+
+                Text("Hvad skal 'Jarvis' starte?")
+                    .font(.callout).foregroundStyle(.secondary)
+                Picker("", selection: $wakeWordActionRaw) {
+                    ForEach(WakeWordAction.allCases) { action in
+                        Text(action.displayName).tag(action.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.radioGroup)
+                .onChange(of: wakeWordActionRaw) { _, _ in
+                    NotificationCenter.default.post(name: .jarvisWakeWordSettingsChanged, object: nil)
+                }
+                if let action = WakeWordAction(rawValue: wakeWordActionRaw) {
+                    Text(action.footnote).font(.caption).foregroundStyle(.secondary)
+                }
+
+                Divider()
 
                 LabeledContent("Picovoice AccessKey") {
                     HStack {
@@ -588,9 +616,47 @@ struct SettingsVoicePane: View {
                         .font(.caption)
                 }
             }
+
+            SettingsCard(
+                title: "Gemini Live Audio",
+                footer: "Bidirektionel stemme via Gemini's WebSocket-API. Jarvis svarer med rigtig syntetisk stemme i stedet for macOS-TTS. OBS: Live-modellen er dyrere end Flash — hold slået fra hvis du vil holde forbruget nede."
+            ) {
+                Toggle("Aktivér Live Voice", isOn: $liveVoiceEnabled)
+                    .onChange(of: liveVoiceEnabled) { _, _ in
+                        NotificationCenter.default.post(name: .jarvisLiveVoiceSettingsChanged, object: nil)
+                    }
+
+                LabeledContent("Model") {
+                    TextField(Constants.LiveVoice.defaultModel, text: $liveVoiceModel)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!liveVoiceEnabled)
+                }
+
+                Text("Aktivér wake-word-action 'Live-samtale' ovenfor for at starte en session med \"Jarvis\".")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            SettingsCard(
+                title: "Auto-stop (VAD)",
+                footer: "Wake-word-optagelser stoppes automatisk når du holder pause. Højere værdi = mindre følsom (bedre i støjende rum)."
+            ) {
+                HStack {
+                    Text("Stilhedstærskel")
+                    Slider(value: $vadSilenceThreshold, in: 0.002...0.08) {
+                        Text("Stilhedstærskel")
+                    }
+                    Text(String(format: "%.3f", vadSilenceThreshold))
+                        .font(.caption.monospacedDigit())
+                        .frame(width: 52, alignment: .trailing)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .onAppear {
             if let existing = keychainService.getPorcupineKey() { porcupineKey = existing }
+            if wakeWordActionRaw.isEmpty { wakeWordActionRaw = WakeWordAction.qna.rawValue }
+            if liveVoiceModel.isEmpty { liveVoiceModel = Constants.LiveVoice.defaultModel }
+            if vadSilenceThreshold <= 0 { vadSilenceThreshold = 0.012 }
         }
     }
 }
@@ -955,5 +1021,123 @@ struct NewModeView: View {
         }
         .padding()
         .frame(width: 520, height: 480)
+    }
+}
+
+// MARK: - Jarvis pane (persona + memory + briefing)
+
+struct SettingsJarvisPane: View {
+    @AppStorage(Constants.Defaults.personaEnabled) private var personaEnabled = false
+    @AppStorage(Constants.Defaults.memoryInjectionEnabled) private var memoryInjectionEnabled = false
+    @AppStorage(Constants.Defaults.personaAddress) private var personaAddress = "Sir"
+    @AppStorage(Constants.Defaults.morningBriefingEnabled) private var briefingEnabled = false
+    @AppStorage(Constants.Defaults.morningBriefingTime) private var briefingTime = "07:30"
+
+    @State private var facts: [JarvisMemoryFact] = []
+    @State private var newKey = ""
+    @State private var newValue = ""
+
+    private var store: JarvisMemoryStore? {
+        (NSApp.delegate as? AppDelegate)?.memoryStore
+    }
+
+    private var briefingService: MorningBriefingService? {
+        // AppDelegate keeps the briefing service private; we trigger a manual
+        // run-now via the public URL scheme / menu instead. Left nil here.
+        nil
+    }
+
+    var body: some View {
+        SettingsPane(
+            title: "Jarvis",
+            subtitle: "Gør Jarvis mere som Iron Man-Jarvis: stemme-persona, hukommelse om dig, og en morgen-briefing."
+        ) {
+            SettingsCard(
+                title: "Persona",
+                footer: "Prepender en Iron Man-Jarvis-preamble til Chat / Q&A / Vision system-prompter. Resten af modes (dictation, translate, osv.) lades urørt."
+            ) {
+                Toggle("Brug Jarvis-persona", isOn: $personaEnabled)
+                LabeledContent("Tiltale") {
+                    TextField("Sir", text: $personaAddress)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 180)
+                        .disabled(!personaEnabled)
+                }
+            }
+
+            SettingsCard(
+                title: "Hukommelse",
+                footer: "Facts gemmes lokalt i ~/Library/Application Support/Jarvis/memory.json. Når toggle'en er slået til bliver de injiceret i system-prompten så Jarvis husker dem på tværs af samtaler."
+            ) {
+                Toggle("Injicér facts i system-prompten", isOn: $memoryInjectionEnabled)
+                    .disabled(!personaEnabled)
+
+                Divider()
+
+                HStack {
+                    TextField("Nøgle (fx 'bor i')", text: $newKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 160)
+                    TextField("Værdi (fx 'København')", text: $newValue)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Tilføj") {
+                        guard let store else { return }
+                        guard !newKey.isEmpty, !newValue.isEmpty else { return }
+                        store.add(key: newKey, value: newValue)
+                        facts = store.all()
+                        newKey = ""
+                        newValue = ""
+                    }
+                    .disabled(newKey.isEmpty || newValue.isEmpty)
+                }
+
+                if facts.isEmpty {
+                    Text("Ingen gemte facts endnu.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: Constants.Spacing.xs) {
+                        ForEach(facts) { fact in
+                            HStack {
+                                Text(fact.key).font(.callout.weight(.medium))
+                                Text(fact.value).font(.callout).foregroundStyle(.secondary)
+                                Spacer()
+                                Button {
+                                    guard let store else { return }
+                                    store.remove(id: fact.id)
+                                    facts = store.all()
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            SettingsCard(
+                title: "Morgen-briefing",
+                footer: "Taler godmorgen, vejret, næste møde og top-nyheder højt på det valgte tidspunkt. Bruger de eksisterende services — ingen ekstra API-forbrug."
+            ) {
+                Toggle("Aktivér morgen-briefing", isOn: $briefingEnabled)
+                    .onChange(of: briefingEnabled) { _, _ in
+                        NotificationCenter.default.post(name: .jarvisMorningBriefingSettingsChanged, object: nil)
+                    }
+                LabeledContent("Tidspunkt (HH:mm)") {
+                    TextField("07:30", text: $briefingTime)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 120)
+                        .onSubmit {
+                            NotificationCenter.default.post(name: .jarvisMorningBriefingSettingsChanged, object: nil)
+                        }
+                        .disabled(!briefingEnabled)
+                }
+            }
+        }
+        .onAppear {
+            if let store { facts = store.all() }
+        }
     }
 }
