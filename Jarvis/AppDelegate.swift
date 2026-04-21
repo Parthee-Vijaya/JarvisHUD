@@ -62,7 +62,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionsManager()
     private let screenCapture = ScreenCaptureService()
     private let ttsService = TTSService()
-    private lazy var geminiClient = GeminiClient(keychainService: keychainService, usageTracker: usageTracker)
+    private lazy var geminiClient: GeminiClient = {
+        let client = GeminiClient(keychainService: keychainService, usageTracker: usageTracker)
+        client.persona = personaService
+        return client
+    }()
+
+    // v1.3.0: Jarvis-persona layer. Memory is a plain list of user-curated
+    // facts persisted to ~/Library/Application Support/Jarvis/memory.json;
+    // PersonaService blends them with a fixed persona block and injects the
+    // result into conversational modes' system prompts.
+    let memoryStore = JarvisMemoryStore()
+    lazy var personaService = PersonaService(memory: memoryStore)
+
+    // v1.3.0: Optional bidirectional Gemini Live Audio session. Off by
+    // default — the Live models cost more than Flash. Only instantiated
+    // when the user flips `liveVoiceEnabled` on.
+    private lazy var liveVoiceService = LiveVoiceService(
+        keychain: keychainService,
+        persona: personaService
+    )
+
+    // v1.3.0: VAD used to auto-stop wake-word-triggered recordings instead of
+    // the old fixed 4-second timer. Shared across wake events.
+    private let wakeVAD = SimpleVAD()
+    private var wakeVADSubscriberToken: UUID?
+    private var wakeVADAutoStopTask: Task<Void, Never>?
+
+    // v1.3.0: Morning briefing scheduler. Opt-in via Settings.
+    private lazy var morningBriefingService = MorningBriefingService(
+        locationService: locationService,
+        updatesService: updatesService,
+        tts: ttsService
+    )
 
     // MARK: - App Lifecycle
 
@@ -76,6 +108,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setupCostWarning()
             setupWakeWord()
             setupVoiceCommands()
+            setupMorningBriefing()
             checkFirstLaunch()
             migrateClaudeBudgetLimits()
             // v1.1.7: spawn any MCP servers the user declared in ~/.jarvis/mcp.json
@@ -968,18 +1001,115 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         wakeWordDetector.stop()
         do {
             try wakeWordDetector.start { [weak self] in
-                guard let self else { return }
-                // Treat a wake event the same as pressing the Q&A hotkey.
-                self.pipeline.handleRecordStart(mode: BuiltInModes.qna, captureScreen: false)
-                // Auto-stop 4 s later — no release key to trigger stop in wake-word mode.
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(4))
-                    self?.pipeline.handleRecordStop()
-                }
+                self?.handleWakeWordFired()
             }
         } catch {
             LoggingService.shared.log("Wake word start failed: \(error.localizedDescription)", level: .warning)
             hudController.showError(error.localizedDescription)
+        }
+    }
+
+    private func handleWakeWordFired() {
+        let action = currentWakeWordAction()
+        LoggingService.shared.log("Wake word fired — action=\(action.rawValue)")
+        switch action {
+        case .qna:
+            startWakeWordQnA()
+        case .chat:
+            if !hudController.isChatVisible {
+                refreshConversationHistory()
+                hudController.showChat()
+            }
+            handleChatVoiceToggle()
+        case .liveVoice:
+            if liveVoiceService.canStart {
+                liveVoiceService.start()
+            } else {
+                LoggingService.shared.log("Wake word: liveVoice requested but canStart=false — falling back to Q&A", level: .warning)
+                startWakeWordQnA()
+            }
+        }
+    }
+
+    private func currentWakeWordAction() -> WakeWordAction {
+        let raw = UserDefaults.standard.string(forKey: Constants.Defaults.wakeWordAction) ?? ""
+        return WakeWordAction(rawValue: raw) ?? .qna
+    }
+
+    /// Q&A-style wake flow: open the HUD in recording state and let the VAD
+    /// stop us when the user pauses. Hard-capped at 25 s so a stuck detector
+    /// can't hold the mic forever.
+    private func startWakeWordQnA() {
+        pipeline.handleRecordStart(mode: BuiltInModes.qna, captureScreen: false)
+        beginVADAutoStop()
+    }
+
+    private func beginVADAutoStop() {
+        // Tear down any previous wake VAD session so we don't double-subscribe.
+        cancelWakeVAD()
+
+        let silenceFloor = UserDefaults.standard.double(forKey: Constants.Defaults.vadSilenceThreshold)
+        if silenceFloor > 0 { wakeVAD.silenceFloor = silenceFloor }
+
+        wakeVAD.onSilence = { [weak self] in self?.stopWakeRecording() }
+        wakeVAD.onMaxDuration = { [weak self] in self?.stopWakeRecording() }
+
+        let token = SharedAudioEngine.shared.addSubscriber { [weak self] buffer in
+            guard let self, let channel = buffer.floatChannelData?[0] else { return }
+            let frames = Int(buffer.frameLength)
+            guard frames > 0 else { return }
+            var sumOfSquares: Float = 0
+            for i in 0..<frames {
+                let sample = channel[i]
+                sumOfSquares += sample * sample
+            }
+            let rms = sqrt(sumOfSquares / Float(frames))
+            self.wakeVAD.submit(rms: Double(rms))
+        }
+        wakeVADSubscriberToken = token
+        wakeVAD.start()
+
+        // Safety-net: if VAD never fires (e.g. user silent from the start)
+        // cut the session off at 25 s so the mic doesn't run forever.
+        wakeVADAutoStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(25))
+            self?.stopWakeRecording()
+        }
+    }
+
+    private func stopWakeRecording() {
+        cancelWakeVAD()
+        pipeline.handleRecordStop()
+    }
+
+    private func cancelWakeVAD() {
+        wakeVAD.stop()
+        if let token = wakeVADSubscriberToken {
+            SharedAudioEngine.shared.removeSubscriber(token)
+            wakeVADSubscriberToken = nil
+        }
+        wakeVADAutoStopTask?.cancel()
+        wakeVADAutoStopTask = nil
+    }
+
+    // MARK: - Morning briefing
+
+    private func setupMorningBriefing() {
+        NotificationCenter.default.addObserver(
+            forName: .jarvisMorningBriefingSettingsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshMorningBriefing()
+        }
+        refreshMorningBriefing()
+    }
+
+    private func refreshMorningBriefing() {
+        if UserDefaults.standard.bool(forKey: Constants.Defaults.morningBriefingEnabled) {
+            morningBriefingService.start()
+        } else {
+            morningBriefingService.stop()
         }
     }
 

@@ -10,11 +10,22 @@ final class GeminiClient {
     private let keychainService: KeychainService
     private let usageTracker: UsageTracker
     private let rest: GeminiREST
+    /// Optional Jarvis-persona layer. When set, conversational modes (Chat,
+    /// Q&A, Vision, Agent) get the persona + memory preamble prepended to
+    /// their system prompt. Safe to leave nil — tests and legacy call sites
+    /// just see raw prompts.
+    var persona: PersonaService?
 
     init(keychainService: KeychainService, usageTracker: UsageTracker) {
         self.keychainService = keychainService
         self.usageTracker = usageTracker
         self.rest = GeminiREST(keychain: keychainService, usage: usageTracker)
+    }
+
+    /// Resolve the system prompt we should actually send for a given mode.
+    /// Falls back to the mode's raw prompt when persona is disabled or absent.
+    private func resolvedSystemPrompt(for mode: Mode) -> String {
+        persona?.effectiveSystemPrompt(for: mode) ?? mode.systemPrompt
     }
 
     // MARK: - Connection test
@@ -126,7 +137,7 @@ final class GeminiClient {
         contents.append(GeminiContent(role: "user", parts: [.text(text)]))
 
         let request = GeminiRequest(
-            systemInstruction: GeminiContent(role: "system", parts: [.text(mode.systemPrompt)]),
+            systemInstruction: GeminiContent(role: "system", parts: [.text(resolvedSystemPrompt(for: mode))]),
             contents: contents,
             tools: mode.webSearch ? [.googleSearch] : nil,
             generationConfig: GeminiGenerationConfig(maxOutputTokens: mode.maxTokens)
@@ -161,7 +172,7 @@ final class GeminiClient {
     ) async -> Result<String, Error> {
         let modelName = modelName(for: mode)
         let request = GeminiRequest(
-            systemInstruction: GeminiContent(role: "system", parts: [.text(mode.systemPrompt)]),
+            systemInstruction: GeminiContent(role: "system", parts: [.text(resolvedSystemPrompt(for: mode))]),
             contents: [GeminiContent(role: "user", parts: [.data(mime: "audio/wav", audioData)])],
             tools: nil,
             generationConfig: GeminiGenerationConfig(maxOutputTokens: mode.maxTokens)
@@ -185,7 +196,7 @@ final class GeminiClient {
 
     private func generateOnce(parts: [GeminiPart], mode: Mode) async throws -> String {
         let request = GeminiRequest(
-            systemInstruction: GeminiContent(role: "system", parts: [.text(mode.systemPrompt)]),
+            systemInstruction: GeminiContent(role: "system", parts: [.text(resolvedSystemPrompt(for: mode))]),
             contents: [GeminiContent(role: "user", parts: parts)],
             tools: nil,
             generationConfig: GeminiGenerationConfig(maxOutputTokens: mode.maxTokens)
@@ -235,7 +246,7 @@ final class GeminiClient {
         if let imageData { parts.append(.data(mime: "image/png", imageData)) }
 
         let request = GeminiRequest(
-            systemInstruction: GeminiContent(role: "system", parts: [.text(mode.systemPrompt)]),
+            systemInstruction: GeminiContent(role: "system", parts: [.text(resolvedSystemPrompt(for: mode))]),
             contents: [GeminiContent(role: "user", parts: parts)],
             tools: [.googleSearch],
             generationConfig: GeminiGenerationConfig(maxOutputTokens: mode.maxTokens)
